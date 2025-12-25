@@ -13,8 +13,9 @@ export async function GET(request: Request) {
         return new Response('Error: Missing "url" parameter. Usage: /api/rss?url=https://site.com', { status: 400 });
     }
 
-    const modelId = "gemini-2.5-flash";
-    // Optimize prompt to be concise for server-side execution
+    // Model priority: try 2.5-flash first (20 free/day), fallback to 3-flash-preview
+    const models = ["gemini-2.5-flash", "gemini-3-flash-preview"];
+
     const systemPrompt = `
     You are an RSS feed generator. Analyze the website content and output VALID RSS 2.0 XML.
     - Root: <rss version="2.0"><channel>...
@@ -22,34 +23,58 @@ export async function GET(request: Request) {
     - Output: ONLY raw XML. No markdown blocks.
   `;
 
-    try {
-        const response = await ai.models.generateContent({
-            model: modelId,
-            contents: `Generate RSS feed for: ${targetUrl}`,
-            config: {
-                systemInstruction: systemPrompt,
-                tools: [{ googleSearch: {} }],
-                thinkingConfig: { thinkingBudget: 1024 },
-            },
-        });
+    let lastError: unknown = null;
 
-        let xml = response.text || "";
-        // Cleanup markdown if present
-        xml = xml.replace(/\`\`\`xml/g, '').replace(/\`\`\`/g, '').trim();
+    for (const modelId of models) {
+        try {
+            console.log(`Trying model: ${modelId}`);
+            const response = await ai.models.generateContent({
+                model: modelId,
+                contents: `Generate RSS feed for: ${targetUrl}`,
+                config: {
+                    systemInstruction: systemPrompt,
+                    tools: [{ googleSearch: {} }],
+                    thinkingConfig: { thinkingBudget: 1024 },
+                },
+            });
 
-        // Return proper XML response with Caching
-        // s-maxage=3600 means CDNs/RSS Readers should cache this for 1 hour (3600s)
-        return new Response(xml, {
-            headers: {
-                'Content-Type': 'application/xml; charset=utf-8',
-                'Cache-Control': 's-maxage=3600, stale-while-revalidate',
-            },
-        });
-    } catch (error) {
-        console.error(error);
-        return new Response(JSON.stringify({ error: 'Failed to generate feed' }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' }
-        });
+            let xml = response.text || "";
+            // Cleanup markdown if present
+            xml = xml.replace(/\`\`\`xml/g, '').replace(/\`\`\`/g, '').trim();
+
+            // Return proper XML response with Caching
+            return new Response(xml, {
+                headers: {
+                    'Content-Type': 'application/xml; charset=utf-8',
+                    'Cache-Control': 's-maxage=3600, stale-while-revalidate',
+                    'X-Model-Used': modelId, // Track which model was used
+                },
+            });
+        } catch (error: unknown) {
+            lastError = error;
+            const statusCode = (error as { status?: number })?.status;
+            // 429 = Rate limit / quota exceeded, try next model
+            if (statusCode === 429 || statusCode === 503) {
+                console.log(`Model ${modelId} quota exceeded, trying next...`);
+                continue;
+            }
+            // For other errors, don't retry
+            break;
+        }
     }
+
+    console.error(lastError);
+
+    // Build detailed error info
+    const errorDetails = {
+        error: 'Failed to generate feed',
+        message: lastError instanceof Error ? lastError.message : String(lastError),
+        status: (lastError as { status?: number })?.status || 'unknown',
+        modelsAttempted: models,
+    };
+
+    return new Response(JSON.stringify(errorDetails, null, 2), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+    });
 }
