@@ -13,7 +13,7 @@ export async function GET(request: Request) {
         return new Response('Error: Missing "url" parameter. Usage: /api/rss?url=https://site.com', { status: 400 });
     }
 
-    const modelId = "gemini-3-pro-preview";
+    const modelId = "gemini-3-flash";
     // Optimize prompt to be concise for server-side execution
     const systemPrompt = `
     You are an RSS feed generator. Analyze the website content and output VALID RSS 2.0 XML.
