@@ -43,11 +43,13 @@ export async function GET(request: Request) {
             xml = xml.replace(/\`\`\`xml/g, '').replace(/\`\`\`/g, '').trim();
 
             // Return proper XML response with Caching
+            // s-maxage=86400 = 24 hours cache on Vercel CDN
+            // stale-while-revalidate=86400 = serve stale content for another 24h while refreshing
             return new Response(xml, {
                 headers: {
                     'Content-Type': 'application/xml; charset=utf-8',
-                    'Cache-Control': 's-maxage=3600, stale-while-revalidate',
-                    'X-Model-Used': modelId, // Track which model was used
+                    'Cache-Control': 's-maxage=86400, stale-while-revalidate=86400',
+                    'X-Model-Used': modelId,
                 },
             });
         } catch (error: unknown) {
