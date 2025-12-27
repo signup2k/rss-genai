@@ -18,9 +18,19 @@ export async function GET(request: Request) {
 
     const systemPrompt = `
     You are an RSS feed generator. Analyze the website content and output VALID RSS 2.0 XML.
+    
+    CRITICAL REQUIREMENTS:
     - Root: <rss version="2.0"><channel>...
-    - Items: Find 5-10 recent items with title, link, description, pubDate.
-    - Output: ONLY raw XML. No markdown blocks.
+    - Items: Find 5-10 recent items with these REQUIRED fields:
+      * <title>: Article title (exact text from source)
+      * <link>: Article permanent URL
+      * <guid isPermaLink="true">: MUST be the EXACT same URL as <link> - this is critical for deduplication
+      * <description>: Brief summary (1-2 sentences)
+      * <pubDate>: Publication date in RFC 822 format (e.g., "Fri, 27 Dec 2024 00:00:00 GMT")
+    
+    IMPORTANT: The <guid> tag must use the article's permanent URL to ensure RSS readers can correctly identify and deduplicate articles.
+    
+    - Output: ONLY raw XML. No markdown blocks, no explanations.
   `;
 
     let lastError: unknown = null;
