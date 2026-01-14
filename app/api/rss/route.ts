@@ -41,6 +41,50 @@ function getContentHash(url: string, content: string): string {
         .digest('hex');
 }
 
+// Sanitize XML content to escape special characters properly
+function sanitizeXML(xml: string): string {
+    // Function to escape special XML characters in text content
+    const escapeXMLText = (text: string): string => {
+        return text
+            .replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)/g, '&amp;')  // Escape unescaped ampersands
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    };
+
+    // Function to escape special characters in attribute values
+    const escapeXMLAttribute = (text: string): string => {
+        return text
+            .replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+    };
+
+    try {
+        // Process common RSS/XML tags to properly escape their content
+        // This is a simple approach - for production, consider using a proper XML parser
+        let sanitized = xml;
+
+        // Escape content between tags (text nodes)
+        // Match pattern: >content< where content doesn't contain < or >
+        sanitized = sanitized.replace(/>([^<>]+)</g, (match, content) => {
+            // Don't escape if it's just whitespace or already contains entities
+            if (content.trim() === '' || content.includes('&amp;')) {
+                return match;
+            }
+            // Only escape the & that are not already part of an entity
+            const escaped = content.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)/g, '&amp;');
+            return `>${escaped}<`;
+        });
+
+        return sanitized;
+    } catch (error) {
+        console.error('XML sanitization error:', error);
+        return xml; // Return original if sanitization fails
+    }
+}
+
 // Generate RSS feed from content using OpenAI (cached based on content hash)
 const generateRSSFromContent = unstable_cache(
     async (targetUrl: string, pageContent: string, contentHash: string) => {
@@ -63,6 +107,12 @@ IMPORTANT RULES:
 2. All URLs must be absolute (include https://domain.com prefix)
 3. Only include actual articles/posts, not navigation or other page elements
 4. If dates are not available, use today's date: ${new Date().toUTCString()}
+5. CRITICAL: Properly escape special XML characters in ALL text content:
+   - Replace & with &amp; (except when already part of an entity like &amp; &lt; etc.)
+   - Replace < with &lt;
+   - Replace > with &gt;
+   - Replace " with &quot; in attribute values
+   - Replace ' with &apos; in attribute values
 
 Output: ONLY raw XML. No markdown blocks, no explanations, no \`\`\` wrappers.`;
 
@@ -91,6 +141,9 @@ Output: ONLY raw XML. No markdown blocks, no explanations, no \`\`\` wrappers.`;
                 let xml = response.choices[0]?.message?.content || "";
                 // Cleanup markdown if present
                 xml = xml.replace(/```xml/g, '').replace(/```/g, '').trim();
+
+                // Sanitize XML to escape special characters properly
+                xml = sanitizeXML(xml);
 
                 // Validate basic RSS structure
                 if (!xml.includes('<rss') || !xml.includes('<channel>')) {
