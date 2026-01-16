@@ -34,6 +34,20 @@ async function fetchWithJina(url: string): Promise<string> {
     return response.text();
 }
 
+// Cached version of fetchWithJina to prevent excessive API calls
+// Cache duration: 1 hour - balances content freshness with API quota conservation
+const fetchWithJinaCache = unstable_cache(
+    async (url: string) => {
+        console.log(`[Jina] Fetching fresh content for: ${url}`);
+        return fetchWithJina(url);
+    },
+    ['jina-fetch'],
+    {
+        revalidate: 3600, // 1 hour in seconds
+        tags: ['jina-fetch'],
+    }
+);
+
 // Calculate SHA-256 hash of content for cache key
 function getContentHash(url: string, content: string): string {
     return createHash('sha256')
@@ -188,14 +202,23 @@ export async function GET(request: Request) {
         return new Response('Error: Missing "url" parameter. Usage: /api/rss?url=https://site.com', { status: 400 });
     }
 
-    // Step 1: Fetch webpage content using Jina Reader with content filtering
+    // Step 1: Fetch webpage content using Jina Reader with content filtering (cached)
     let pageContent: string;
+    let jinaFetchTime: number;
     try {
-        console.log(`Fetching content from: ${targetUrl}`);
-        pageContent = await fetchWithJina(targetUrl);
-        console.log(`Fetched ${pageContent.length} characters`);
+        console.log(`[API] Request for: ${targetUrl}`);
+        const startTime = Date.now();
+        pageContent = await fetchWithJinaCache(targetUrl);
+        jinaFetchTime = Date.now() - startTime;
+
+        // Log cache status based on fetch time
+        if (jinaFetchTime < 100) {
+            console.log(`[Jina] Cache HIT (${jinaFetchTime}ms) - ${pageContent.length} chars`);
+        } else {
+            console.log(`[Jina] Cache MISS (${jinaFetchTime}ms) - ${pageContent.length} chars`);
+        }
     } catch (error) {
-        console.error('Jina Reader error:', error);
+        console.error('[Jina] Fetch error:', error);
         return new Response(JSON.stringify({
             error: 'Failed to fetch webpage content',
             message: error instanceof Error ? error.message : String(error),
@@ -211,7 +234,7 @@ export async function GET(request: Request) {
     console.log(`Content hash: ${contentHash.slice(0, 16)}...`);
 
     // Step 3: Generate RSS (will use cache if content hash matches)
-    let cacheStatus = 'MISS';
+    let rssGenerationStatus = 'MISS';
     try {
         const startTime = Date.now();
         const result = await generateRSSFromContent(targetUrl, pageContent, contentHash);
@@ -219,11 +242,11 @@ export async function GET(request: Request) {
 
         // If very fast (<100ms), likely a cache hit
         if (duration < 100) {
-            cacheStatus = 'HIT';
-            console.log(`Cache HIT for ${contentHash.slice(0, 8)} (${duration}ms)`);
+            rssGenerationStatus = 'HIT';
+            console.log(`[RSS] Cache HIT for ${contentHash.slice(0, 8)} (${duration}ms)`);
         } else {
-            cacheStatus = 'MISS';
-            console.log(`Cache MISS for ${contentHash.slice(0, 8)} (${duration}ms)`);
+            rssGenerationStatus = 'MISS';
+            console.log(`[RSS] Cache MISS for ${contentHash.slice(0, 8)} (${duration}ms)`);
         }
 
         // Return proper XML response with caching headers
@@ -233,7 +256,9 @@ export async function GET(request: Request) {
                 'Cache-Control': 's-maxage=86400, stale-while-revalidate=86400',
                 'X-Model-Used': result.modelUsed,
                 'X-Content-Source': 'jina-reader-filtered',
-                'X-Cache-Status': cacheStatus,
+                'X-RSS-Cache-Status': rssGenerationStatus,
+                'X-Jina-Cache-Status': jinaFetchTime < 100 ? 'HIT' : 'MISS',
+                'X-Jina-Fetch-Time': `${jinaFetchTime}ms`,
                 'X-Content-Hash': contentHash.slice(0, 16),
             },
         });
