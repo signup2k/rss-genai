@@ -43,7 +43,7 @@ const fetchWithJinaCache = unstable_cache(
     },
     ['jina-fetch'],
     {
-        revalidate: 3600, // 1 hour in seconds
+        revalidate: 86400, // 24 hours in seconds
         tags: ['jina-fetch'],
     }
 );
@@ -102,7 +102,7 @@ function sanitizeXML(xml: string): string {
 // Generate RSS feed from content using OpenAI (cached based on content hash)
 const generateRSSFromContent = unstable_cache(
     async (targetUrl: string, pageContent: string, contentHash: string) => {
-        const models = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"];
+        const models = ["gpt-5.1-low", "gpt-5.1", "gpt-5"];
 
         const systemPrompt = `You are an RSS feed generator. Parse the provided webpage content and output VALID RSS 2.0 XML.
 
