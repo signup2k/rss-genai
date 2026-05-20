@@ -2,17 +2,22 @@
 
 ## Overview
 
-This project generates RSS feeds from any webpage using:
+This project generates RSS/Atom feeds from any webpage using:
 - **Jina.ai Reader**: Fetches and converts webpages to markdown with content filtering
-- **OpenAI API**: Parses content and generates structured RSS XML
-- **Content-Based Caching**: Prevents duplicate RSS entries caused by LLM non-determinism
+- **OpenAI-compatible LLM**: Parses content and outputs structured JSON
+- **Programmatic XML Builder**: Generates well-formed RSS 2.0 / Atom XML from structured data
+- **Persistent Registry** (Upstash Redis on Vercel, file-system locally): Prevents duplicate RSS entries and date drift across regenerations
 
 ## Key Features
 
-✅ **No Duplicate Articles**: Content hashing ensures same content → same RSS  
-✅ **Cost Optimization**: Cache hits avoid LLM API calls (~80% reduction)  
-✅ **Fast Responses**: Cached responses complete in <100ms  
+✅ **No Duplicate Articles**: GUID-based deduplication with persistent date tracking  
+✅ **Structured Output**: LLM outputs JSON → code builds XML (no more XML escaping issues)  
+✅ **Model Fallback**: Automatic fallback through multiple models on rate limits  
+✅ **Full-Text RSS**: Optional full article content in feed entries  
+✅ **Multi-Source Aggregation**: Merge multiple sites into a single feed  
+✅ **Atom Support**: Generate RSS 2.0 or Atom feeds  
 ✅ **Custom Base URL**: Support for OpenAI-compatible APIs  
+✅ **Vercel-Ready**: Registry persists across cold starts via Upstash Redis  
 
 ## Environment Setup
 
@@ -26,8 +31,19 @@ OPENAI_API_KEY=sk-your-api-key-here
 
 # Optional: Custom base URL for OpenAI-compatible APIs
 # Leave empty or omit to use the default OpenAI endpoint
-# Example for custom endpoint: https://your-custom-endpoint.com/v1
 OPENAI_BASE_URL=
+
+# Optional: Specify a single model (skips fallback chain)
+# If not set, uses: gpt-5.4-mini → gpt-4o-mini → gpt-4o
+OPENAI_MODEL=
+
+# Optional (Vercel): Upstash Redis for persistent article date registry
+# These are auto-injected when you add Upstash Redis via Vercel Marketplace
+KV_REST_API_URL=
+KV_REST_API_TOKEN=
+# Or use Upstash native env var names:
+# UPSTASH_REDIS_REST_URL=
+# UPSTASH_REDIS_REST_TOKEN=
 ```
 
 ### Getting an OpenAI API Key
@@ -37,13 +53,16 @@ OPENAI_BASE_URL=
 3. Generate a new API key
 4. Copy and paste it into your `.env.local` file
 
-### Using Custom Base URLs
+### Setting Up Upstash Redis (for Vercel Deployment)
 
-The project supports OpenAI-compatible APIs (like Azure OpenAI, LocalAI, etc.). Simply set:
+The article date registry needs persistent storage on Vercel (serverless filesystem is ephemeral). 
 
-```env
-OPENAI_BASE_URL=https://your-custom-endpoint.com/v1
-```
+1. Go to [Vercel Marketplace → Redis](https://vercel.com/marketplace?category=storage&search=redis)
+2. Add Upstash Redis integration to your project
+3. The environment variables (`KV_REST_API_URL`, `KV_REST_API_TOKEN`) are auto-injected
+4. Free tier: 10,000 requests/day, 256 MB — more than enough for personal use
+
+> **Local development**: If Redis env vars are not set, the app automatically falls back to file-system storage (`.rss-cache/` directory). No setup needed for local dev.
 
 ## Installation & Running
 
@@ -57,49 +76,115 @@ npm run dev
 
 Visit http://localhost:3000 to access the application.
 
-## Usage
+## API Reference
 
-### Generate RSS Feed
+### 1. Generate RSS Feed
 
-Make a GET request to:
 ```
-http://localhost:3000/api/rss?url=https://example.com/blog
+GET /api/rss?url=<target-url>
 ```
 
-The API will:
-1. Fetch the webpage content via Jina.ai Reader
-2. Filter out headers, footers, navigation, etc.
-3. Calculate content hash for caching
-4. Use OpenAI to parse and generate RSS XML (or return cached version)
-5. Return a valid RSS 2.0 feed
+**Parameters:**
 
-### Understanding Cache Behavior
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `url` | ✅ | — | Target webpage URL |
+| `fulltext` | ❌ | `false` | Set to `true` to include full article content |
+| `limit` | ❌ | `10` | Number of articles to extract (1-30) |
+| `format` | ❌ | `rss` | Output format: `rss` or `atom` |
+| `refresh` | ❌ | `false` | Set to `true` to force regeneration (bypass cache) |
 
-**First request** (Cache MISS):
-- Fetches content from website
-- Calls LLM to generate RSS (2-5 seconds)
-- Caches result for 7 days
-- Returns RSS with `X-Cache-Status: MISS` header
+**Examples:**
 
-**Subsequent requests** with same content (Cache HIT):
-- Fetches content from website
-- Detects matching content hash
-- Returns cached RSS (<100ms)
-- Returns RSS with `X-Cache-Status: HIT` header
+```bash
+# Basic RSS feed
+curl "http://localhost:3000/api/rss?url=https://example.com/blog"
 
-**When content changes** (Cache MISS):
-- Detects different content hash
-- Generates new RSS with LLM
-- Updates cache
-- Returns new RSS with `X-Cache-Status: MISS` header
+# Full-text feed with 20 articles
+curl "http://localhost:3000/api/rss?url=https://example.com/blog&fulltext=true&limit=20"
 
-### Response Headers
+# Atom format
+curl "http://localhost:3000/api/rss?url=https://example.com/blog&format=atom"
 
-Monitor these headers to understand caching:
-- `X-Cache-Status`: `HIT` (cached) or `MISS` (newly generated)
-- `X-Content-Hash`: Content hash (first 16 characters)
-- `X-Model-Used`: Which GPT model was used
-- `X-Content-Source`: `jina-reader-filtered`
+# Force refresh (bypass cache)
+curl "http://localhost:3000/api/rss?url=https://example.com/blog&refresh=true"
+```
+
+### 2. Multi-Source Aggregated Feed
+
+```
+GET /api/rss/merge?urls=<url1>,<url2>,...
+```
+
+Combines multiple sources into a single feed, sorted by date.
+
+**Parameters:**
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `urls` | ✅ | — | Comma-separated list of target URLs (max 10) |
+| `title` | ❌ | Auto-generated | Custom title for the merged feed |
+| `limit` | ❌ | `10` | Articles per source (1-30) |
+| `fulltext` | ❌ | `false` | Include full article content |
+| `format` | ❌ | `rss` | Output format: `rss` or `atom` |
+
+**Example:**
+
+```bash
+curl "http://localhost:3000/api/rss/merge?urls=https://blog1.com,https://blog2.com&title=My+Tech+Feed"
+```
+
+### 3. Feed Status / Health Check
+
+```
+GET /api/rss/status?url=<target-url>
+```
+
+Returns JSON with feed tracking information — useful for debugging.
+
+**Example response:**
+
+```json
+{
+  "url": "https://example.com/blog",
+  "status": "active",
+  "trackedArticles": 42,
+  "newestFirstSeen": "2026-05-20T12:00:00.000Z",
+  "oldestFirstSeen": "2026-01-15T08:30:00.000Z",
+  "newestPubDate": "Tue, 20 May 2026 00:00:00 GMT",
+  "oldestPubDate": "Wed, 15 Jan 2026 00:00:00 GMT",
+  "recentArticles": [...]
+}
+```
+
+## RSS Reader Setup
+
+Add any of these URLs to your RSS reader (Feedly, Inoreader, NetNewsWire, etc.):
+
+```
+# Single source
+https://your-vercel-app.vercel.app/api/rss?url=https://target-blog.com
+
+# Full-text single source
+https://your-vercel-app.vercel.app/api/rss?url=https://target-blog.com&fulltext=true
+
+# Multi-source aggregated
+https://your-vercel-app.vercel.app/api/rss/merge?urls=https://blog1.com,https://blog2.com
+```
+
+## Response Headers
+
+Monitor these headers to understand caching and processing:
+
+| Header | Values | Description |
+|--------|--------|-------------|
+| `X-RSS-Cache-Status` | `HIT` / `MISS` | RSS generation cache status |
+| `X-Jina-Cache-Status` | `HIT` / `MISS` | Webpage content fetch cache status |
+| `X-Model-Used` | Model name | Which LLM model was used |
+| `X-Article-Count` | Number | Articles in the feed |
+| `X-Feed-Format` | `rss` / `atom` | Output format |
+| `X-Fulltext` | `true` / `false` | Whether full-text mode is active |
+| `X-Jina-Fetch-Time` | Duration | Time to fetch webpage content |
 
 ## Content Filtering
 
@@ -112,103 +197,45 @@ The Jina.ai integration automatically excludes:
 - Comment sections
 - Related posts sections
 
-This ensures only the main article content is analyzed for RSS generation.
+## Models
 
-## Models Used
+The implementation tries models in this order (configurable via `OPENAI_MODEL` env var):
+1. `gpt-5.4-mini` (default, cost-effective)
+2. `gpt-4o-mini` (fallback)
+3. `gpt-4o` (most capable fallback)
 
-The implementation tries these OpenAI models in order (fallback on rate limits):
-1. `gpt-4o-mini` (default, cost-effective)
-2. `gpt-4o` (more capable)
-3. `gpt-3.5-turbo` (faster, less capable)
+Set `OPENAI_MODEL=your-model` to use a single specific model.
 
-## Customization
+## Architecture
 
-### Adjust Content Filtering
-
-Edit the `X-Remove-Selector` header in `route.ts`:
-
-```typescript
-'X-Remove-Selector': 'header, footer, nav, .your-custom-class'
+```
+Request → Jina Reader (cached 24h) → LLM extracts JSON → XML Builder → Date Stabilisation → Response
+                                           │                    │               │
+                                    Structured JSON        Well-formed     Persistent Registry
+                                    (not raw XML)          RSS/Atom XML    (Redis or filesystem)
 ```
 
-### Target Specific Content
-
-Uncomment the `X-Target-Selector` header in `route.ts`:
-
-```typescript
-'X-Target-Selector': 'article, main, .content'
-```
-
-This focuses extraction on specific content containers.
-
-### Adjust Cache Duration
-
-Edit the cache configuration in `route.ts`:
-
-```typescript
-{
-    revalidate: 604800, // 7 days in seconds (customize this)
-    tags: ['rss-generation'],
-}
-```
-
-### Manual Cache Clearing
-
-Restart the dev server to clear all caches, or implement a cache clearing endpoint:
-
-```typescript
-// app/api/clear-cache/route.ts
-import { revalidateTag } from 'next/cache';
-
-export async function POST() {
-    revalidateTag('rss-generation');
-    return new Response('Cache cleared');
-}
-```
-
-## Testing
-
-### Verify Cache is Working
-
-```bash
-# First request (should be slow, MISS)
-time curl -i "http://localhost:3000/api/rss?url=https://example.com/blog"
-
-# Second request (should be fast, HIT)
-time curl -i "http://localhost:3000/api/rss?url=https://example.com/blog"
-```
-
-Check the `X-Cache-Status` header and compare response times.
-
-### Test with RSS Reader
-
-1. Add feed to your RSS reader:
-   ```
-   http://localhost:3000/api/rss?url=https://your-blog.com
-   ```
-
-2. Refresh multiple times - articles should NOT duplicate
-
-3. Wait for website to publish new content, then refresh - new articles should appear
+Key design decisions:
+- **JSON → XML**: LLM outputs structured JSON, code builds XML. Eliminates all XML escaping issues.
+- **Date Registry**: Persistent storage ensures articles keep their original publication dates across regenerations.
+- **Lazy Client Init**: OpenAI client is initialized on first request, not at module load time (enables clean builds without API keys).
 
 ## Troubleshooting
 
-**API Key Errors**: Ensure `OPENAI_API_KEY` is set in `.env.local`
-
-**Custom Base URL Issues**: Verify the URL format ends with `/v1` or the appropriate path
+**API Key Errors**: Ensure `OPENAI_API_KEY` is set in `.env.local` (local) or Vercel Environment Variables (production)
 
 **Empty/Invalid RSS**: The webpage might not have article-like content, or content filtering may be too aggressive
 
 **Rate Limits**: The API automatically falls back to alternative models on 429 errors
 
-**Cache Not Working**: Check response headers for `X-Cache-Status`. Restart dev server to clear cache.
+**Duplicate Articles in RSS Reader**: Use `refresh=true` to force regeneration. Check `/api/rss/status?url=...` to see tracked articles.
 
-**Duplicate Articles Still Appearing**: Ensure your RSS reader uses the `<guid>` field for deduplication (most modern readers do)
+**Date Drift on Vercel**: Ensure Upstash Redis is configured. Without it, the date registry is lost on cold starts.
 
-## Production Deployment
+## Production Deployment (Vercel)
 
-When deploying to production (Vercel, etc.), make sure to:
-1. Set `OPENAI_API_KEY` in environment variables
-2. Optionally set `OPENAI_BASE_URL`
-3. Cache will work automatically with Next.js caching infrastructure
-4. Monitor response headers to verify cache effectiveness
+1. Push to GitHub (Vercel auto-deploys)
+2. Set `OPENAI_API_KEY` in Vercel Environment Variables
+3. Optionally set `OPENAI_BASE_URL` and `OPENAI_MODEL`
+4. Add Upstash Redis from Vercel Marketplace (for persistent date registry)
+5. Monitor response headers to verify cache effectiveness
