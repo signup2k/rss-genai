@@ -62,8 +62,11 @@ async function getRedis(): Promise<import("@upstash/redis").Redis | null> {
 }
 
 // --- File-system backend (local dev fallback) ---
+// On Vercel, process.cwd() (/var/task) is read-only; only /tmp is writable.
 
-const REGISTRY_DIR = join(process.cwd(), ".rss-cache");
+const REGISTRY_DIR = process.env.VERCEL
+    ? join("/tmp", ".rss-cache")
+    : join(process.cwd(), ".rss-cache");
 
 function fsPath(url: string): string {
     const hash = createHash("sha256").update(url).digest("hex").slice(0, 16);
@@ -80,8 +83,13 @@ async function fsLoad(url: string): Promise<UrlRegistry> {
 }
 
 async function fsSave(url: string, registry: UrlRegistry): Promise<void> {
-    await mkdir(REGISTRY_DIR, { recursive: true });
-    await writeFile(fsPath(url), JSON.stringify(registry, null, 2), "utf-8");
+    try {
+        await mkdir(REGISTRY_DIR, { recursive: true });
+        await writeFile(fsPath(url), JSON.stringify(registry, null, 2), "utf-8");
+    } catch (e) {
+        // Silently fail if filesystem is truly unavailable — better than crashing
+        console.warn("[Storage] File-system write failed (non-critical):", e);
+    }
 }
 
 // --- Public API ---
