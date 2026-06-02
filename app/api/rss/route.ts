@@ -18,6 +18,7 @@ import OpenAI from "openai";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { loadRegistry, saveRegistry } from "@/lib/storage";
 import { buildRSS, buildAtom, type RSSFeedData, type RSSItem } from "@/lib/xml-builder";
+import { resolveSelectors, type SiteSelectors } from "@/lib/site-selectors";
 
 // --- OpenAI client (lazy-initialized to avoid build-time errors) ---
 
@@ -44,14 +45,27 @@ function getModels(): string[] {
 
 // --- Jina Reader ---
 
-async function fetchWithJina(url: string): Promise<string> {
+async function fetchWithJina(url: string, selectors: SiteSelectors): Promise<string> {
     const jinaUrl = `https://r.jina.ai/${url}`;
+    
+    const headers: Record<string, string> = {
+        "Accept": "text/markdown",
+    };
+
+    if (selectors.targetSelector) {
+        headers["X-Target-Selector"] = selectors.targetSelector;
+    }
+    
+    if (selectors.removeSelector) {
+        headers["X-Remove-Selector"] = selectors.removeSelector;
+    }
+
+    if (selectors.waitForSelector) {
+        headers["X-Wait-For-Selector"] = selectors.waitForSelector;
+    }
+
     const response = await fetch(jinaUrl, {
-        headers: {
-            "Accept": "text/markdown",
-            "X-Remove-Selector":
-                "header, footer, nav, .navigation, .sidebar, .menu, .ads, .social-share, .comments, #comments, .related-posts",
-        },
+        headers,
     });
 
     if (!response.ok) {
@@ -62,9 +76,9 @@ async function fetchWithJina(url: string): Promise<string> {
 }
 
 const fetchWithJinaCache = unstable_cache(
-    async (url: string) => {
+    async (url: string, targetSelector?: string, removeSelector?: string, waitForSelector?: string) => {
         console.log(`[Jina] Fetching fresh content for: ${url}`);
-        return fetchWithJina(url);
+        return fetchWithJina(url, { targetSelector, removeSelector, waitForSelector });
     },
     ["jina-fetch"],
     {
@@ -260,6 +274,9 @@ export async function GET(request: Request) {
                     limit: "(optional) Number of articles, 1-30, default 10",
                     format: "(optional) 'rss' (default) or 'atom'",
                     refresh: "(optional) 'true' to force regeneration",
+                    target: "(optional) CSS selector for exact content to extract",
+                    remove: "(optional) CSS selector for elements to remove",
+                    waitfor: "(optional) CSS selector to wait for before extraction",
                 },
             }, null, 2),
             { status: 400, headers: { "Content-Type": "application/json" } }
@@ -270,6 +287,13 @@ export async function GET(request: Request) {
     const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "10", 10) || 10, 1), 30);
     const format = searchParams.get("format") === "atom" ? "atom" : "rss";
     const refresh = searchParams.get("refresh") === "true";
+
+    const apiSelectors = {
+        targetSelector: searchParams.get("target") || undefined,
+        removeSelector: searchParams.get("remove") || undefined,
+        waitForSelector: searchParams.get("waitfor") || undefined,
+    };
+    const selectors = resolveSelectors(targetUrl, apiSelectors);
 
     // --- Force cache invalidation if requested ---
     if (refresh) {
@@ -284,7 +308,12 @@ export async function GET(request: Request) {
     try {
         console.log(`[API] Request for: ${targetUrl} (limit=${limit}, fulltext=${fulltext}, format=${format})`);
         const startTime = Date.now();
-        pageContent = await fetchWithJinaCache(targetUrl);
+        pageContent = await fetchWithJinaCache(
+            targetUrl,
+            selectors.targetSelector,
+            selectors.removeSelector,
+            selectors.waitForSelector
+        );
         jinaFetchTime = Date.now() - startTime;
         console.log(`[Jina] ${jinaFetchTime < 100 ? "Cache HIT" : "Cache MISS"} (${jinaFetchTime}ms) — ${pageContent.length} chars`);
     } catch (error) {
