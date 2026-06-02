@@ -293,7 +293,7 @@ export async function GET(request: Request) {
         removeSelector: searchParams.get("remove") || undefined,
         waitForSelector: searchParams.get("waitfor") || undefined,
     };
-    const selectors = resolveSelectors(targetUrl, apiSelectors);
+    const selectors = await resolveSelectors(targetUrl, apiSelectors);
 
     // --- Force cache invalidation if requested ---
     if (refresh) {

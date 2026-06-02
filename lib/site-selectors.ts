@@ -1,33 +1,16 @@
+import { loadGlobalSiteConfigs } from "@/lib/storage";
+import { DEFAULT_SITE_CONFIGS } from "@/lib/default-configs";
+
 export interface SiteSelectors {
     targetSelector?: string;
     removeSelector?: string;
     waitForSelector?: string;
 }
 
-// Predefined configuration, matched by domain name
-const SITE_CONFIGS: Record<string, SiteSelectors> = {
-    "medium.com": {
-        targetSelector: "article",
-        removeSelector: "header, footer, nav, .metabar, .postActions",
-    },
-    "github.com": {
-        targetSelector: "article.markdown-body",
-        removeSelector: "header, footer, nav, .flash",
-    },
-    "x.com": {
-        waitForSelector: "article",
-        removeSelector: "nav, header",
-    },
-    "twitter.com": {
-        waitForSelector: "article",
-        removeSelector: "nav, header",
-    }
-};
-
 /**
- * Get predefined selectors based on the URL's hostname
+ * Get selectors based on the URL's hostname, merging global configs from DB with default fallbacks.
  */
-export function getSiteSelectors(url: string): SiteSelectors {
+export async function getSiteSelectors(url: string): Promise<SiteSelectors> {
     try {
         const urlObj = new URL(url);
         let hostname = urlObj.hostname;
@@ -37,8 +20,13 @@ export function getSiteSelectors(url: string): SiteSelectors {
             hostname = hostname.substring(4);
         }
 
-        // Return the matched config or an empty object if no match found
-        return SITE_CONFIGS[hostname] || {};
+        const globalConfigs = await loadGlobalSiteConfigs();
+        
+        // User configured settings take precedence over default configs
+        const userConfig = globalConfigs[hostname];
+        const defaultConfig = DEFAULT_SITE_CONFIGS[hostname];
+
+        return userConfig || defaultConfig || {};
     } catch (e) {
         // If URL parsing fails, just return empty config
         return {};
@@ -47,10 +35,10 @@ export function getSiteSelectors(url: string): SiteSelectors {
 
 /**
  * Merge API provided selectors with predefined ones and defaults.
- * Priority: API Params > Predefined (Site Config) > Default
+ * Priority: API Params > DB Config > Default Config > Default Fallback String
  */
-export function resolveSelectors(url: string, apiParams: Partial<SiteSelectors>): SiteSelectors {
-    const predefined = getSiteSelectors(url);
+export async function resolveSelectors(url: string, apiParams: Partial<SiteSelectors>): Promise<SiteSelectors> {
+    const predefined = await getSiteSelectors(url);
     
     return {
         // Target Selector: API param or predefined config

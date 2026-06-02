@@ -25,12 +25,20 @@ export interface UrlRegistry {
     [guid: string]: ArticleRecord;
 }
 
+export type GlobalSiteConfig = Record<string, {
+    targetSelector?: string;
+    removeSelector?: string;
+    waitForSelector?: string;
+}>;
+
 // --- Helpers ---
 
 function registryKey(url: string): string {
     const hash = createHash("sha256").update(url).digest("hex").slice(0, 16);
     return `rss-registry:${hash}`;
 }
+
+const GLOBAL_CONFIG_KEY = "rss-global-site-configs";
 
 // --- Upstash Redis backend ---
 
@@ -92,6 +100,28 @@ async function fsSave(url: string, registry: UrlRegistry): Promise<void> {
     }
 }
 
+function fsGlobalConfigPath(): string {
+    return join(REGISTRY_DIR, "global-configs.json");
+}
+
+async function fsLoadGlobalConfigs(): Promise<GlobalSiteConfig> {
+    try {
+        const data = await readFile(fsGlobalConfigPath(), "utf-8");
+        return JSON.parse(data) as GlobalSiteConfig;
+    } catch {
+        return {};
+    }
+}
+
+async function fsSaveGlobalConfigs(configs: GlobalSiteConfig): Promise<void> {
+    try {
+        await mkdir(REGISTRY_DIR, { recursive: true });
+        await writeFile(fsGlobalConfigPath(), JSON.stringify(configs, null, 2), "utf-8");
+    } catch (e) {
+        console.warn("[Storage] File-system global config write failed (non-critical):", e);
+    }
+}
+
 // --- Public API ---
 
 export async function loadRegistry(url: string): Promise<UrlRegistry> {
@@ -120,4 +150,31 @@ export async function saveRegistry(url: string, registry: UrlRegistry): Promise<
         }
     }
     return fsSave(url, registry);
+}
+
+export async function loadGlobalSiteConfigs(): Promise<GlobalSiteConfig> {
+    const redis = await getRedis();
+    if (redis) {
+        try {
+            const data = await redis.get<GlobalSiteConfig>(GLOBAL_CONFIG_KEY);
+            return data ?? {};
+        } catch (e) {
+            console.warn("[Storage] Redis config read failed, falling back to FS:", e);
+            return fsLoadGlobalConfigs();
+        }
+    }
+    return fsLoadGlobalConfigs();
+}
+
+export async function saveGlobalSiteConfigs(configs: GlobalSiteConfig): Promise<void> {
+    const redis = await getRedis();
+    if (redis) {
+        try {
+            await redis.set(GLOBAL_CONFIG_KEY, configs);
+            return;
+        } catch (e) {
+            console.warn("[Storage] Redis config write failed, falling back to FS:", e);
+        }
+    }
+    return fsSaveGlobalConfigs(configs);
 }
