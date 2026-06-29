@@ -97,9 +97,9 @@ function buildSystemPrompt(limit: number, fulltext: boolean): string {
    * "content": The FULL article text content (preserve paragraphs, keep it readable)`
         : `   * "description": Brief summary (1-2 sentences)`;
 
-    return `You are an RSS feed data extractor. Parse the provided webpage content and output structured JSON.
+    return `You are an RSS feed data extractor. Parse the provided webpage content and output structured JSON (valid json).
 
-OUTPUT FORMAT — respond with ONLY a JSON object, no markdown, no explanation:
+OUTPUT FORMAT — respond with ONLY a JSON object (valid json), no markdown, no explanation:
 {
   "channel": {
     "title": "Feed title",
@@ -123,7 +123,7 @@ RULES:
 3. Only include actual articles/posts, not navigation, ads, or other page elements
 4. DATES: Extract the ACTUAL publication date from the page content. Look for date patterns near article titles, bylines, or metadata. If you absolutely cannot find any date, use "NO_DATE_FOUND" — do NOT invent or guess a date.
 5. Categories: extract tags, labels, or topic categories if visible. Use an empty array [] if none found.
-6. Output ONLY the JSON object. No markdown code blocks, no explanation.`;
+6. Output ONLY the JSON object as valid json. No markdown code blocks, no explanation.`;
 }
 
 interface LLMResult {
@@ -147,7 +147,7 @@ const generateFeedData = unstable_cache(
                         { role: "system", content: systemPrompt },
                         {
                             role: "user",
-                            content: `Parse this webpage content from ${targetUrl} and extract article data:\n\n${pageContent}`,
+                            content: `Parse this webpage content from ${targetUrl} and extract article data. Return only a valid json object matching the requested schema:\n\n${pageContent}`,
                         },
                     ],
                     temperature: 0,

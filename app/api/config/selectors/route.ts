@@ -17,7 +17,7 @@ export async function GET() {
             status: 200,
             headers: { "Content-Type": "application/json" }
         });
-    } catch (e) {
+    } catch {
         return new Response(JSON.stringify({ error: "Failed to load configs" }), {
             status: 500,
             headers: { "Content-Type": "application/json" }
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
             status: 200,
             headers: { "Content-Type": "application/json" }
         });
-    } catch (e) {
+    } catch {
         return new Response(JSON.stringify({ error: "Invalid request body" }), {
             status: 400,
             headers: { "Content-Type": "application/json" }

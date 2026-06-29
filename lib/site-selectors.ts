@@ -27,7 +27,7 @@ export async function getSiteSelectors(url: string): Promise<SiteSelectors> {
         const defaultConfig = DEFAULT_SITE_CONFIGS[hostname];
 
         return userConfig || defaultConfig || {};
-    } catch (e) {
+    } catch {
         // If URL parsing fails, just return empty config
         return {};
     }

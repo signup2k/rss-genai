@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { SiteSelectors } from "@/lib/site-selectors";
 import type { GlobalSiteConfig } from "@/lib/storage";
 
 export default function Home() {
@@ -49,7 +48,7 @@ export default function Home() {
       if (genWait) apiUrl.searchParams.set("waitfor", genWait);
       if (genFulltext) apiUrl.searchParams.set("fulltext", "true");
       setGeneratedLink(apiUrl.toString());
-    } catch (e) {
+    } catch {
       setError("Invalid base URL context");
     }
   };
@@ -74,8 +73,8 @@ export default function Home() {
       setNewTarget("");
       setNewRemove("");
       setNewWait("");
-    } catch (e: any) {
-      setError(e.message || "Failed to save configs (Check password)");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to save configs (Check password)");
     }
     setSaving(false);
   };
