@@ -2,7 +2,7 @@
 
 ## Overview
 
-RSS GenAI is a Next.js app that generates RSS or Atom feeds from arbitrary webpages. The main endpoint fetches webpage content through Jina Reader, asks an OpenAI-compatible LLM to extract structured feed data, then serializes that data into XML locally.
+RSS GenAI is a Next.js app that generates RSS or Atom feeds from arbitrary webpages. The main endpoint fetches webpage content through a markdown provider layer (Jina Reader first, markdown.new fallback), asks an OpenAI-compatible LLM to extract structured feed data, then serializes that data into XML locally.
 
 ## Stack
 
@@ -25,6 +25,7 @@ RSS GenAI is a Next.js app that generates RSS or Atom feeds from arbitrary webpa
 
 - 2026-06-29: Fixed an OpenAI-compatible JSON-mode validation failure by ensuring both system and user messages explicitly contain lowercase `json` while keeping `response_format: { type: "json_object" }`.
 - 2026-06-30: Switched default LLM provider/model to DeepSeek `deepseek-v4-flash`; added lightweight LLM input truncation and item filtering.
+- 2026-06-30: Added markdown.new as a fallback markdown source when Jina.ai Reader is unavailable.
 
 ## Constraints
 
@@ -32,4 +33,5 @@ RSS GenAI is a Next.js app that generates RSS or Atom feeds from arbitrary webpa
 - Preserve explicit JSON-mode instructions when changing prompts. Some providers reject `json_object` requests unless request messages visibly include lowercase `json`.
 - Default LLM env vars are `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, and optional `DEEPSEEK_MODEL`; `OPENAI_*` vars remain fallback-compatible.
 - Page content sent to the LLM is capped at 100,000 characters to keep personal-use cost and latency bounded.
+- Default content source is `source=auto`: try Jina first, then markdown.new. Jina CSS selectors only apply to the Jina provider.
 - Production persistence depends on Redis/KV env vars; filesystem fallback on Vercel is not durable.

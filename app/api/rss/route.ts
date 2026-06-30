@@ -1,7 +1,7 @@
 // File: app/api/rss/route.ts
 //
 // Generates RSS/Atom feeds from any webpage using:
-//   - Jina.ai Reader: fetches & converts webpages to markdown
+//   - Jina.ai Reader / markdown.new: fetches & converts webpages to markdown
 //   - OpenAI-compatible LLM: parses content into structured JSON
 //   - Programmatic XML builder: generates well-formed RSS/Atom XML
 //   - Persistent registry (Upstash Redis on Vercel, file-system locally):
@@ -13,6 +13,7 @@
 //   limit     (optional) — number of articles to extract (1-30, default 10)
 //   format    (optional) — "rss" (default) or "atom"
 //   refresh   (optional) — "true" to force regeneration, bypassing cache
+//   source    (optional) — "auto" (default), "jina", or "markdown"
 
 import OpenAI from "openai";
 import { unstable_cache, revalidateTag } from "next/cache";
@@ -48,7 +49,30 @@ function getModels(): string[] {
     return [DEFAULT_LLM_MODEL];
 }
 
-// --- Jina Reader ---
+// --- Markdown fetchers ---
+
+type MarkdownSource = "auto" | "jina" | "markdown";
+type MarkdownProvider = "jina" | "markdown";
+type MarkdownMethod = "auto" | "ai" | "browser";
+
+interface PageFetchResult {
+    content: string;
+    provider: MarkdownProvider;
+}
+
+function parseMarkdownSource(value: string | null): MarkdownSource {
+    if (value === "jina" || value === "markdown") {
+        return value;
+    }
+    return "auto";
+}
+
+function parseMarkdownMethod(value: string | null): MarkdownMethod {
+    if (value === "ai" || value === "browser") {
+        return value;
+    }
+    return "auto";
+}
 
 async function fetchWithJina(url: string, selectors: SiteSelectors): Promise<string> {
     const jinaUrl = `https://r.jina.ai/${url}`;
@@ -80,15 +104,78 @@ async function fetchWithJina(url: string, selectors: SiteSelectors): Promise<str
     return response.text();
 }
 
-const fetchWithJinaCache = unstable_cache(
-    async (url: string, targetSelector?: string, removeSelector?: string, waitForSelector?: string) => {
+async function fetchWithMarkdownNew(url: string, method: MarkdownMethod): Promise<string> {
+    const response = await fetch("https://markdown.new/", {
+        method: "POST",
+        headers: {
+            "Accept": "text/markdown",
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            url,
+            method,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`markdown.new failed: ${response.status} ${response.statusText}`);
+    }
+
+    return response.text();
+}
+
+async function fetchPageContent(
+    url: string,
+    source: MarkdownSource,
+    markdownMethod: MarkdownMethod,
+    selectors: SiteSelectors
+): Promise<PageFetchResult> {
+    if (source === "markdown") {
+        console.log(`[markdown.new] Fetching fresh content for: ${url} (method=${markdownMethod})`);
+        return {
+            content: await fetchWithMarkdownNew(url, markdownMethod),
+            provider: "markdown",
+        };
+    }
+
+    if (source === "jina") {
         console.log(`[Jina] Fetching fresh content for: ${url}`);
-        return fetchWithJina(url, { targetSelector, removeSelector, waitForSelector });
+        return {
+            content: await fetchWithJina(url, selectors),
+            provider: "jina",
+        };
+    }
+
+    try {
+        console.log(`[Jina] Fetching fresh content for: ${url}`);
+        return {
+            content: await fetchWithJina(url, selectors),
+            provider: "jina",
+        };
+    } catch (error) {
+        console.warn(`[Jina] Failed, falling back to markdown.new for ${url}:`, error);
+        return {
+            content: await fetchWithMarkdownNew(url, markdownMethod),
+            provider: "markdown",
+        };
+    }
+}
+
+const fetchPageContentCache = unstable_cache(
+    async (
+        url: string,
+        source: MarkdownSource,
+        markdownMethod: MarkdownMethod,
+        targetSelector?: string,
+        removeSelector?: string,
+        waitForSelector?: string
+    ) => {
+        return fetchPageContent(url, source, markdownMethod, { targetSelector, removeSelector, waitForSelector });
     },
-    ["jina-fetch"],
+    ["markdown-fetch-v2"],
     {
         revalidate: 86400, // 24 hours
-        tags: ["jina-fetch"],
+        tags: ["markdown-fetch"],
     }
 );
 
@@ -316,6 +403,8 @@ export async function GET(request: Request) {
                     limit: "(optional) Number of articles, 1-30, default 10",
                     format: "(optional) 'rss' (default) or 'atom'",
                     refresh: "(optional) 'true' to force regeneration",
+                    source: "(optional) 'auto' (default), 'jina', or 'markdown'",
+                    markdownMethod: "(optional) markdown.new method: 'auto' (default), 'ai', or 'browser'",
                     target: "(optional) CSS selector for exact content to extract",
                     remove: "(optional) CSS selector for elements to remove",
                     waitfor: "(optional) CSS selector to wait for before extraction",
@@ -329,6 +418,8 @@ export async function GET(request: Request) {
     const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "10", 10) || 10, 1), 30);
     const format = searchParams.get("format") === "atom" ? "atom" : "rss";
     const refresh = searchParams.get("refresh") === "true";
+    const source = parseMarkdownSource(searchParams.get("source"));
+    const markdownMethod = parseMarkdownMethod(searchParams.get("markdownMethod"));
 
     const apiSelectors = {
         targetSelector: searchParams.get("target") || undefined,
@@ -342,24 +433,30 @@ export async function GET(request: Request) {
         console.log(`[API] Force refresh requested for: ${targetUrl}`);
         revalidateTag("rss-generation", { expire: 0 });
         revalidateTag("jina-fetch", { expire: 0 });
+        revalidateTag("markdown-fetch", { expire: 0 });
     }
 
-    // --- Step 1: Fetch webpage content via Jina Reader (cached 24h) ---
+    // --- Step 1: Fetch webpage content as markdown (cached 24h) ---
     let pageContent: string;
-    let jinaFetchTime: number;
+    let contentFetchTime: number;
+    let contentProvider: MarkdownProvider;
     try {
-        console.log(`[API] Request for: ${targetUrl} (limit=${limit}, fulltext=${fulltext}, format=${format})`);
+        console.log(`[API] Request for: ${targetUrl} (limit=${limit}, fulltext=${fulltext}, format=${format}, source=${source})`);
         const startTime = Date.now();
-        pageContent = await fetchWithJinaCache(
+        const fetchResult = await fetchPageContentCache(
             targetUrl,
+            source,
+            markdownMethod,
             selectors.targetSelector,
             selectors.removeSelector,
             selectors.waitForSelector
         );
-        jinaFetchTime = Date.now() - startTime;
-        console.log(`[Jina] ${jinaFetchTime < 100 ? "Cache HIT" : "Cache MISS"} (${jinaFetchTime}ms) — ${pageContent.length} chars`);
+        pageContent = fetchResult.content;
+        contentProvider = fetchResult.provider;
+        contentFetchTime = Date.now() - startTime;
+        console.log(`[Markdown] ${contentFetchTime < 100 ? "Cache HIT" : "Cache MISS"} (${contentFetchTime}ms, provider=${contentProvider}) — ${pageContent.length} chars`);
     } catch (error) {
-        console.error("[Jina] Fetch error:", error);
+        console.error("[Markdown] Fetch error:", error);
         return new Response(
             JSON.stringify({
                 error: "Failed to fetch webpage content",
@@ -401,10 +498,12 @@ export async function GET(request: Request) {
                 "Content-Type": contentType,
                 "Cache-Control": "s-maxage=86400, stale-while-revalidate=86400",
                 "X-Model-Used": result.modelUsed,
-                "X-Content-Source": "jina-reader-filtered",
+                "X-Content-Source": contentProvider === "jina" ? "jina-reader-filtered" : "markdown.new",
+                "X-Markdown-Source": contentProvider,
+                "X-Markdown-Method": contentProvider === "markdown" ? markdownMethod : "n/a",
                 "X-RSS-Cache-Status": cacheStatus,
-                "X-Jina-Cache-Status": jinaFetchTime < 100 ? "HIT" : "MISS",
-                "X-Jina-Fetch-Time": `${jinaFetchTime}ms`,
+                "X-Markdown-Cache-Status": contentFetchTime < 100 ? "HIT" : "MISS",
+                "X-Markdown-Fetch-Time": `${contentFetchTime}ms`,
                 "X-Article-Count": `${stabilisedItems.length}`,
                 "X-Feed-Format": format,
                 "X-Fulltext": fulltext ? "true" : "false",

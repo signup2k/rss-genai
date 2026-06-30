@@ -47,10 +47,12 @@ Generates an RSS or Atom feed from a specified webpage.
 - `limit` (optional): Maximum number of articles to extract (1-30, default: 10).
 - `format` (optional): `rss` (default) or `atom`.
 - `refresh` (optional): Set to `true` to force cache invalidation and regenerate the feed.
+- `source` (optional): `auto` (default), `jina`, or `markdown`. `auto` tries Jina first and falls back to markdown.new.
+- `markdownMethod` (optional): markdown.new method: `auto` (default), `ai`, or `browser`.
 
-#### Jina.ai CSS Selector Parameters
+#### Markdown Source Parameters
 
-This project uses Jina.ai to fetch and parse web pages. You can control the extraction process by providing CSS selectors. These overrides take precedence over predefined site rules in `lib/site-selectors.ts`.
+This project can fetch markdown through Jina.ai Reader or markdown.new. CSS selector overrides only apply to Jina.ai Reader.
 
 - `target` (optional): CSS selector for exact content to extract (`X-Target-Selector`).
 - `remove` (optional): CSS selector for elements to remove, such as ads or navbars (`X-Remove-Selector`).
@@ -59,6 +61,7 @@ This project uses Jina.ai to fetch and parse web pages. You can control the extr
 **Example:**
 ```bash
 curl "http://localhost:3000/api/rss?url=https://example.com/blog&target=article.content&remove=.ads,.nav"
+curl "http://localhost:3000/api/rss?url=https://example.com/blog&source=markdown&markdownMethod=browser"
 ```
 
 ### `/api/rss/merge`
@@ -71,3 +74,5 @@ Aggregates multiple RSS feeds into a single combined feed.
 - `limit` (optional): Maximum articles per source.
 - `fulltext` (optional): Set to `true` for full article content.
 - `format` (optional): `rss` (default) or `atom`.
+- `source` (optional): `auto` (default), `jina`, or `markdown`.
+- `markdownMethod` (optional): markdown.new method: `auto` (default), `ai`, or `browser`.

@@ -2,6 +2,10 @@
 
 ## 2026-06-30
 
+- Added `source=auto|jina|markdown` and `markdownMethod=auto|ai|browser` support for webpage markdown fetching.
+- Default fetch behavior now tries Jina.ai Reader first and falls back to markdown.new if Jina fails.
+- Added dashboard controls for markdown source selection and removed the unused local `.vscode/` folder.
+- Updated `/api/rss/merge` to pass markdown source options through to internal `/api/rss` calls.
 - Switched the default OpenAI-compatible provider to DeepSeek using `DEEPSEEK_API_KEY`, default base URL `https://api.deepseek.com`, and default model `deepseek-v4-flash`.
 - Kept `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` as fallback environment variables.
 - Capped webpage content sent to the LLM at 100,000 characters.

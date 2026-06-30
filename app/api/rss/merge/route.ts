@@ -9,6 +9,8 @@
 //   limit     (optional) — max articles per source (1-30, default 10)
 //   fulltext  (optional) — "true" to include full article content
 //   format    (optional) — "rss" (default) or "atom"
+//   source    (optional) — "auto" (default), "jina", or "markdown"
+//   markdownMethod (optional) — markdown.new method: "auto" (default), "ai", or "browser"
 
 import { buildRSS, buildAtom, type RSSFeedData, type RSSItem } from "@/lib/xml-builder";
 
@@ -27,6 +29,8 @@ export async function GET(request: Request) {
                     limit: "(optional) Articles per source, 1-30, default 10",
                     fulltext: "(optional) 'true' for full article content",
                     format: "(optional) 'rss' (default) or 'atom'",
+                    source: "(optional) 'auto' (default), 'jina', or 'markdown'",
+                    markdownMethod: "(optional) markdown.new method: 'auto' (default), 'ai', or 'browser'",
                 },
             }, null, 2),
             { status: 400, headers: { "Content-Type": "application/json" } }
@@ -52,6 +56,8 @@ export async function GET(request: Request) {
     const fulltext = searchParams.get("fulltext") === "true";
     const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "10", 10) || 10, 1), 30);
     const format = searchParams.get("format") === "atom" ? "atom" : "rss";
+    const source = searchParams.get("source");
+    const markdownMethod = searchParams.get("markdownMethod");
 
     // Build the internal API URL base (same origin)
     const origin = new URL(request.url).origin;
@@ -63,6 +69,8 @@ export async function GET(request: Request) {
                 url,
                 limit: String(limit),
                 ...(fulltext ? { fulltext: "true" } : {}),
+                ...(source ? { source } : {}),
+                ...(markdownMethod ? { markdownMethod } : {}),
                 format: "rss", // always fetch as RSS internally for parsing
             });
 

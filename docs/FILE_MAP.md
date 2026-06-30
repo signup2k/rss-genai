@@ -6,17 +6,17 @@ Last full audit: 2026-06-29 | Files mapped: 16
 
 ## Root
 
-### README.md (~73 lines, md, map-updated 2026-06-29)
+### README.md (~78 lines, md, map-updated 2026-06-30)
 Purpose: concise public API overview for RSS generation and feed merging.
 Structure:
-- API usage examples for `/api/rss`, `/api/rss/merge`, and `/api/rss/status`.
+- API usage examples for `/api/rss`, `/api/rss/merge`, and `/api/rss/status`, including markdown source selection.
 Depends on: current Next.js route behavior.
 
-### SETUP.md (~243 lines, md, map-updated 2026-06-30)
+### SETUP.md (~255 lines, md, map-updated 2026-06-30)
 Purpose: setup and deployment guide covering OpenAI-compatible LLMs, Redis, Vercel, and troubleshooting.
 Structure:
 - Env var reference for `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, fallback OpenAI vars, Redis/KV, and admin password.
-- API examples and deployment notes for Vercel.
+- API examples, markdown source options, and deployment notes for Vercel.
 Gotchas: provider-specific OpenAI-compatible behavior may differ from official OpenAI.
 
 ### package.json (~28 lines, json, map-updated 2026-06-29)
@@ -46,11 +46,11 @@ Structure:
 - `metadata`: app title and description.
 - `RootLayout`: wraps app content with HTML/body and global font classes.
 
-### app/page.tsx (~311 lines, tsx, map-updated 2026-06-29)
-Purpose: client-side dashboard for generating RSS links and managing site selector configs.
+### app/page.tsx (~338 lines, tsx, map-updated 2026-06-30)
+Purpose: client-side dashboard for generating RSS links, choosing markdown source options, and managing site selector configs.
 Structure:
 - `Home` component: local state for generator fields, admin password, selector configs, and errors.
-- Handlers build `/api/rss` links and POST global selector configs.
+- Handlers build `/api/rss` links with optional source/method params and POST global selector configs.
 Depends on: `/api/config/selectors`, `GlobalSiteConfig`, `SiteSelectors`.
 
 ### app/globals.css (css, map-updated 2026-06-29)
@@ -58,23 +58,23 @@ Purpose: global Tailwind/CSS styling for the app shell.
 
 ## app/api
 
-### app/api/rss/route.ts (~424 lines, ts, map-updated 2026-06-30)
+### app/api/rss/route.ts (~523 lines, ts, map-updated 2026-06-30)
 Purpose: primary RSS/Atom generator endpoint; fetches webpage markdown, asks an LLM for structured feed data, stabilizes dates, and emits XML.
 Structure:
 - `getOpenAI` (L25): lazy OpenAI SDK client using `DEEPSEEK_API_KEY`, DeepSeek base URL, and OpenAI env var fallbacks.
-- `fetchWithJina` / `fetchWithJinaCache` (L43): Jina Reader fetch with selector headers and 24h cache.
-- `buildSystemPrompt` (L94): schema and extraction rules for JSON-mode LLM output.
-- `trimPageContent` / `normaliseItems` (L134): caps LLM input at 100k chars and filters unusable LLM item rows.
-- `generateFeedData` (L167): model loop, `response_format: { type: "json_object" }`, JSON parsing, structure validation.
-- `stabiliseDates` (L211): reconciles item dates against persistent registry.
-- `GET` (L256): query parsing, cache invalidation, fetch/generate/build response pipeline.
+- `fetchWithJina` / `fetchWithMarkdownNew` / `fetchPageContentCache` (L77): markdown fetching via Jina first, with markdown.new fallback and 24h cache.
+- `buildSystemPrompt` (L186): schema and extraction rules for JSON-mode LLM output.
+- `trimPageContent` / `normaliseItems` (L226): caps LLM input at 100k chars and filters unusable LLM item rows.
+- `generateFeedData` (L261): model loop, `response_format: { type: "json_object" }`, JSON parsing, structure validation.
+- `stabiliseDates` (L343): reconciles item dates against persistent registry.
+- `GET` (L390): query parsing, cache invalidation, fetch/generate/build response pipeline.
 Depends on: `openai`, Next cache APIs, `lib/storage`, `lib/xml-builder`, `lib/site-selectors`.
-Gotchas: OpenAI-compatible JSON mode can reject requests unless input messages explicitly contain lowercase `json`; keep both system and user prompts explicit. Default model is DeepSeek `deepseek-v4-flash`.
+Gotchas: OpenAI-compatible JSON mode can reject requests unless input messages explicitly contain lowercase `json`; keep both system and user prompts explicit. Jina selector params do not apply to markdown.new.
 
-### app/api/rss/merge/route.ts (~174 lines, ts, map-updated 2026-06-29)
+### app/api/rss/merge/route.ts (~182 lines, ts, map-updated 2026-06-30)
 Purpose: merges multiple generated RSS feeds into a single RSS/Atom feed.
 Structure:
-- `GET`: validates `urls`, fetches internal `/api/rss` for each source, extracts items, sorts by pubDate, and rebuilds XML.
+- `GET`: validates `urls`, forwards source options, fetches internal `/api/rss` for each source, extracts items, sorts by pubDate, and rebuilds XML.
 - `unescapeXml`: reverses XML escaping before passing items back to the XML builder.
 Depends on: `lib/xml-builder`.
 Gotchas: parses its own RSS output with regex, which is acceptable only because this project controls the XML shape.

@@ -16,6 +16,8 @@ export default function Home() {
   const [genRemove, setGenRemove] = useState("");
   const [genWait, setGenWait] = useState("");
   const [genFulltext, setGenFulltext] = useState(false);
+  const [genSource, setGenSource] = useState("auto");
+  const [genMarkdownMethod, setGenMarkdownMethod] = useState("auto");
   const [generatedLink, setGeneratedLink] = useState("");
 
   // Config Manager State
@@ -47,6 +49,8 @@ export default function Home() {
       if (genRemove) apiUrl.searchParams.set("remove", genRemove);
       if (genWait) apiUrl.searchParams.set("waitfor", genWait);
       if (genFulltext) apiUrl.searchParams.set("fulltext", "true");
+      if (genSource !== "auto") apiUrl.searchParams.set("source", genSource);
+      if (genMarkdownMethod !== "auto") apiUrl.searchParams.set("markdownMethod", genMarkdownMethod);
       setGeneratedLink(apiUrl.toString());
     } catch {
       setError("Invalid base URL context");
@@ -159,6 +163,30 @@ export default function Home() {
                 placeholder=".loaded-content"
                 className="w-full px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Content Source</label>
+              <select
+                value={genSource}
+                onChange={(e) => setGenSource(e.target.value)}
+                className="w-full px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="auto">Auto fallback</option>
+                <option value="jina">Jina Reader</option>
+                <option value="markdown">markdown.new</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">markdown.new Method</label>
+              <select
+                value={genMarkdownMethod}
+                onChange={(e) => setGenMarkdownMethod(e.target.value)}
+                className="w-full px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="auto">Auto</option>
+                <option value="ai">AI</option>
+                <option value="browser">Browser</option>
+              </select>
             </div>
             <div className="flex items-center mt-6">
               <label className="flex items-center space-x-2 cursor-pointer">

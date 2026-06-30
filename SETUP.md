@@ -3,7 +3,7 @@
 ## Overview
 
 This project generates RSS/Atom feeds from any webpage using:
-- **Jina.ai Reader**: Fetches and converts webpages to markdown with content filtering
+- **Markdown fetchers**: Jina.ai Reader first, with markdown.new fallback for outages
 - **DeepSeek LLM (OpenAI-compatible API)**: Parses content and outputs structured JSON
 - **Programmatic XML Builder**: Generates well-formed RSS 2.0 / Atom XML from structured data
 - **Persistent Registry** (Upstash Redis on Vercel, file-system locally): Prevents duplicate RSS entries and date drift across regenerations
@@ -98,6 +98,8 @@ GET /api/rss?url=<target-url>
 | `limit` | ❌ | `10` | Number of articles to extract (1-30) |
 | `format` | ❌ | `rss` | Output format: `rss` or `atom` |
 | `refresh` | ❌ | `false` | Set to `true` to force regeneration (bypass cache) |
+| `source` | ❌ | `auto` | Markdown source: `auto`, `jina`, or `markdown` |
+| `markdownMethod` | ❌ | `auto` | markdown.new method: `auto`, `ai`, or `browser` |
 
 **Examples:**
 
@@ -113,6 +115,9 @@ curl "http://localhost:3000/api/rss?url=https://example.com/blog&format=atom"
 
 # Force refresh (bypass cache)
 curl "http://localhost:3000/api/rss?url=https://example.com/blog&refresh=true"
+
+# Force markdown.new instead of Jina
+curl "http://localhost:3000/api/rss?url=https://example.com/blog&source=markdown&markdownMethod=browser"
 ```
 
 ### 2. Multi-Source Aggregated Feed
@@ -132,6 +137,8 @@ Combines multiple sources into a single feed, sorted by date.
 | `limit` | ❌ | `10` | Articles per source (1-30) |
 | `fulltext` | ❌ | `false` | Include full article content |
 | `format` | ❌ | `rss` | Output format: `rss` or `atom` |
+| `source` | ❌ | `auto` | Markdown source passed to each internal `/api/rss` call |
+| `markdownMethod` | ❌ | `auto` | markdown.new method passed to each internal `/api/rss` call |
 
 **Example:**
 
@@ -184,16 +191,20 @@ Monitor these headers to understand caching and processing:
 | Header | Values | Description |
 |--------|--------|-------------|
 | `X-RSS-Cache-Status` | `HIT` / `MISS` | RSS generation cache status |
-| `X-Jina-Cache-Status` | `HIT` / `MISS` | Webpage content fetch cache status |
+| `X-Markdown-Cache-Status` | `HIT` / `MISS` | Webpage content fetch cache status |
+| `X-Markdown-Source` | `jina` / `markdown` | Provider used for webpage markdown |
+| `X-Markdown-Method` | `auto` / `ai` / `browser` / `n/a` | markdown.new method when used |
 | `X-Model-Used` | Model name | Which LLM model was used |
 | `X-Article-Count` | Number | Articles in the feed |
 | `X-Feed-Format` | `rss` / `atom` | Output format |
 | `X-Fulltext` | `true` / `false` | Whether full-text mode is active |
-| `X-Jina-Fetch-Time` | Duration | Time to fetch webpage content |
+| `X-Markdown-Fetch-Time` | Duration | Time to fetch webpage content |
 
-## Content Filtering
+## Markdown Fetching
 
-The Jina.ai integration automatically excludes:
+Default `source=auto` tries Jina.ai Reader first and falls back to markdown.new if Jina fails. Use `source=jina` or `source=markdown` to force one provider.
+
+Jina.ai selector filtering can exclude:
 - Headers and footers
 - Navigation menus
 - Sidebars
@@ -211,14 +222,15 @@ Set `DEEPSEEK_MODEL=your-model` to use a different DeepSeek model. `OPENAI_MODEL
 ## Architecture
 
 ```
-Request → Jina Reader (cached 24h) → LLM extracts JSON → XML Builder → Date Stabilisation → Response
-                                           │                    │               │
-                                    Structured JSON        Well-formed     Persistent Registry
-                                    (not raw XML)          RSS/Atom XML    (Redis or filesystem)
+Request → Markdown fetcher (cached 24h) → LLM extracts JSON → XML Builder → Date Stabilisation → Response
+                                              │                    │               │
+                                       Structured JSON        Well-formed     Persistent Registry
+                                       (not raw XML)          RSS/Atom XML    (Redis or filesystem)
 ```
 
 Key design decisions:
 - **JSON → XML**: LLM outputs structured JSON, code builds XML. Eliminates all XML escaping issues.
+- **Fetcher Fallback**: `source=auto` keeps Jina as the first choice and uses markdown.new when Jina is unavailable.
 - **Date Registry**: Persistent storage ensures articles keep their original publication dates across regenerations.
 - **Lazy Client Init**: OpenAI client is initialized on first request, not at module load time (enables clean builds without API keys).
 
