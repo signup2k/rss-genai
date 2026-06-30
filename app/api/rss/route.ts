@@ -20,27 +20,32 @@ import { loadRegistry, saveRegistry } from "@/lib/storage";
 import { buildRSS, buildAtom, type RSSFeedData, type RSSItem } from "@/lib/xml-builder";
 import { resolveSelectors, type SiteSelectors } from "@/lib/site-selectors";
 
-// --- OpenAI client (lazy-initialized to avoid build-time errors) ---
+// --- OpenAI-compatible client (lazy-initialized to avoid build-time errors) ---
+
+const DEFAULT_LLM_BASE_URL = "https://api.deepseek.com";
+const DEFAULT_LLM_MODEL = "deepseek-v4-flash";
+const MAX_PAGE_CONTENT_CHARS = 100_000;
 
 let _openai: OpenAI | null = null;
 function getOpenAI(): OpenAI {
     if (!_openai) {
         _openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY,
-            baseURL: process.env.OPENAI_BASE_URL || undefined,
+            apiKey: process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY,
+            baseURL: process.env.DEEPSEEK_BASE_URL || process.env.OPENAI_BASE_URL || DEFAULT_LLM_BASE_URL,
         });
     }
     return _openai;
 }
 
 // --- Model configuration ---
-// Supports OPENAI_MODEL env var for single model, or falls back to a chain.
+// Supports DEEPSEEK_MODEL / OPENAI_MODEL env vars for overrides.
 
 function getModels(): string[] {
-    if (process.env.OPENAI_MODEL) {
-        return [process.env.OPENAI_MODEL];
+    const model = process.env.DEEPSEEK_MODEL || process.env.OPENAI_MODEL;
+    if (model) {
+        return [model];
     }
-    return ["gpt-5.4-mini", "gpt-4o-mini", "gpt-4o"];
+    return [DEFAULT_LLM_MODEL];
 }
 
 // --- Jina Reader ---
@@ -131,6 +136,41 @@ interface LLMResult {
     modelUsed: string;
 }
 
+function trimPageContent(pageContent: string): string {
+    if (pageContent.length <= MAX_PAGE_CONTENT_CHARS) {
+        return pageContent;
+    }
+    return `${pageContent.slice(0, MAX_PAGE_CONTENT_CHARS)}\n\n[Content truncated to ${MAX_PAGE_CONTENT_CHARS} characters before LLM extraction.]`;
+}
+
+function stringField(value: unknown): string {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function normaliseItems(items: unknown[]): RSSItem[] {
+    const normalised: Array<RSSItem | null> = items
+        .map((item) => {
+            const record = item && typeof item === "object" ? item as Record<string, unknown> : {};
+            const title = stringField(record.title);
+            const link = stringField(record.link);
+            if (!title || !link) return null;
+
+            return {
+                title,
+                link,
+                guid: stringField(record.guid) || link,
+                description: stringField(record.description) || title,
+                pubDate: stringField(record.pubDate) || "NO_DATE_FOUND",
+                categories: Array.isArray(record.categories)
+                    ? record.categories.map(stringField).filter(Boolean)
+                    : [],
+                content: stringField(record.content) || undefined,
+            };
+        });
+
+    return normalised.filter((item): item is RSSItem => item !== null);
+}
+
 const generateFeedData = unstable_cache(
     async (targetUrl: string, pageContent: string, limit: number, fulltext: boolean): Promise<LLMResult> => {
         const models = getModels();
@@ -176,9 +216,11 @@ const generateFeedData = unstable_cache(
                     continue;
                 }
 
-                // Normalise items: ensure guid = link if not provided
-                for (const item of parsed.items) {
-                    if (!item.guid) item.guid = item.link;
+                parsed.items = normaliseItems(parsed.items);
+                if (parsed.items.length === 0) {
+                    console.log(`[RSS-Gen] No usable items from ${modelId}`);
+                    lastError = new Error("LLM output contained no usable feed items");
+                    continue;
                 }
 
                 console.log(`[RSS-Gen] Successfully extracted ${parsed.items.length} articles with ${modelId}`);
@@ -332,7 +374,11 @@ export async function GET(request: Request) {
     let cacheStatus = "MISS";
     try {
         const startTime = Date.now();
-        const result = await generateFeedData(targetUrl, pageContent, limit, fulltext);
+        const llmPageContent = trimPageContent(pageContent);
+        if (llmPageContent.length !== pageContent.length) {
+            console.log(`[RSS-Gen] Truncated page content from ${pageContent.length} to ${llmPageContent.length} chars`);
+        }
+        const result = await generateFeedData(targetUrl, llmPageContent, limit, fulltext);
         const duration = Date.now() - startTime;
         cacheStatus = duration < 100 ? "HIT" : "MISS";
         console.log(`[RSS] ${cacheStatus} (${duration}ms) — ${result.feedData.items.length} articles`);

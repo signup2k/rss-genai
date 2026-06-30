@@ -4,7 +4,7 @@
 
 This project generates RSS/Atom feeds from any webpage using:
 - **Jina.ai Reader**: Fetches and converts webpages to markdown with content filtering
-- **OpenAI-compatible LLM**: Parses content and outputs structured JSON
+- **DeepSeek LLM (OpenAI-compatible API)**: Parses content and outputs structured JSON
 - **Programmatic XML Builder**: Generates well-formed RSS 2.0 / Atom XML from structured data
 - **Persistent Registry** (Upstash Redis on Vercel, file-system locally): Prevents duplicate RSS entries and date drift across regenerations
 
@@ -26,16 +26,21 @@ This project generates RSS/Atom feeds from any webpage using:
 Create a `.env.local` file in the project root with:
 
 ```env
-# Required: Your OpenAI API key
-OPENAI_API_KEY=sk-your-api-key-here
+# Required: Your DeepSeek API key
+DEEPSEEK_API_KEY=sk-your-api-key-here
 
-# Optional: Custom base URL for OpenAI-compatible APIs
-# Leave empty or omit to use the default OpenAI endpoint
-OPENAI_BASE_URL=
+# Optional: Custom DeepSeek/OpenAI-compatible base URL
+# If omitted, uses https://api.deepseek.com
+DEEPSEEK_BASE_URL=
 
 # Optional: Specify a single model (skips fallback chain)
-# If not set, uses: gpt-5.4-mini → gpt-4o-mini → gpt-4o
-OPENAI_MODEL=
+# If not set, uses: deepseek-v4-flash
+DEEPSEEK_MODEL=
+
+# Backward-compatible fallback env vars are still accepted:
+# OPENAI_API_KEY=
+# OPENAI_BASE_URL=
+# OPENAI_MODEL=
 
 # Optional (Vercel): Upstash Redis for persistent article date registry
 # These are auto-injected when you add Upstash Redis via Vercel Marketplace
@@ -46,9 +51,9 @@ KV_REST_API_TOKEN=
 # UPSTASH_REDIS_REST_TOKEN=
 ```
 
-### Getting an OpenAI API Key
+### Getting a DeepSeek API Key
 
-1. Visit [OpenAI Platform](https://platform.openai.com/api-keys)
+1. Visit [DeepSeek Platform](https://platform.deepseek.com/)
 2. Sign in or create an account
 3. Generate a new API key
 4. Copy and paste it into your `.env.local` file
@@ -199,12 +204,9 @@ The Jina.ai integration automatically excludes:
 
 ## Models
 
-The implementation tries models in this order (configurable via `OPENAI_MODEL` env var):
-1. `gpt-5.4-mini` (default, cost-effective)
-2. `gpt-4o-mini` (fallback)
-3. `gpt-4o` (most capable fallback)
+The implementation uses `deepseek-v4-flash` by default via DeepSeek's OpenAI-compatible API.
 
-Set `OPENAI_MODEL=your-model` to use a single specific model.
+Set `DEEPSEEK_MODEL=your-model` to use a different DeepSeek model. `OPENAI_MODEL` remains accepted as a backward-compatible fallback.
 
 ## Architecture
 
@@ -222,7 +224,7 @@ Key design decisions:
 
 ## Troubleshooting
 
-**API Key Errors**: Ensure `OPENAI_API_KEY` is set in `.env.local` (local) or Vercel Environment Variables (production)
+**API Key Errors**: Ensure `DEEPSEEK_API_KEY` is set in `.env.local` (local) or Vercel Environment Variables (production)
 
 **Empty/Invalid RSS**: The webpage might not have article-like content, or content filtering may be too aggressive
 
@@ -235,7 +237,7 @@ Key design decisions:
 ## Production Deployment (Vercel)
 
 1. Push to GitHub (Vercel auto-deploys)
-2. Set `OPENAI_API_KEY` in Vercel Environment Variables
-3. Optionally set `OPENAI_BASE_URL` and `OPENAI_MODEL`
+2. Set `DEEPSEEK_API_KEY` in Vercel Environment Variables
+3. Optionally set `DEEPSEEK_BASE_URL` and `DEEPSEEK_MODEL`
 4. Add Upstash Redis from Vercel Marketplace (for persistent date registry)
 5. Monitor response headers to verify cache effectiveness
