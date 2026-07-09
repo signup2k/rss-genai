@@ -46,9 +46,14 @@ Generates an RSS or Atom feed from a specified webpage.
 - `fulltext` (optional): Set to `true` to include full article content instead of just a summary.
 - `limit` (optional): Maximum number of articles to extract (1-30, default: 10).
 - `format` (optional): `rss` (default) or `atom`.
-- `refresh` (optional): Set to `true` to force cache invalidation and regenerate the feed.
+- `refresh` (optional): Set to `true` to refetch this page; unchanged adapted
+  feeds can still reuse their incremental snapshot.
 - `source` (optional): `auto` (default), `jina`, or `markdown`. `auto` tries Jina first and falls back to markdown.new.
 - `markdownMethod` (optional): markdown.new method: `auto` (default), `ai`, or `browser`.
+- `extract` (optional): `llm` (default), `deterministic`, `auto`, or `shadow`.
+  `auto` uses a site adapter to identify article cards, sends only new cards to
+  the LLM, and reuses a persistent snapshot when no new URLs appear. Unsupported
+  sites fall back to the full LLM path.
 
 #### Markdown Source Parameters
 
@@ -62,6 +67,8 @@ This project can fetch markdown through Jina.ai Reader or markdown.new. CSS sele
 ```bash
 curl "http://localhost:3000/api/rss?url=https://example.com/blog&target=article.content&remove=.ads,.nav"
 curl "http://localhost:3000/api/rss?url=https://example.com/blog&source=markdown&markdownMethod=browser"
+curl "http://localhost:3000/api/rss?url=https://example.com/blog&extract=deterministic"
+curl "http://localhost:3000/api/rss?url=https://example.com/blog&extract=auto"
 ```
 
 ### `/api/rss/merge`
@@ -74,5 +81,6 @@ Aggregates multiple RSS feeds into a single combined feed.
 - `limit` (optional): Maximum articles per source.
 - `fulltext` (optional): Set to `true` for full article content.
 - `format` (optional): `rss` (default) or `atom`.
+- `extract` (optional): extraction mode forwarded to each source.
 - `source` (optional): `auto` (default), `jina`, or `markdown`.
 - `markdownMethod` (optional): markdown.new method: `auto` (default), `ai`, or `browser`.

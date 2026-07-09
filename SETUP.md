@@ -42,6 +42,10 @@ DEEPSEEK_MODEL=
 # OPENAI_BASE_URL=
 # OPENAI_MODEL=
 
+# Optional extraction default: llm, deterministic, auto, or shadow
+# Keep "llm" during rollout; use "auto" after comparing actual subscriptions.
+EXTRACTION_MODE=llm
+
 # Optional (Vercel): Upstash Redis for persistent article date registry
 # These are auto-injected when you add Upstash Redis via Vercel Marketplace
 KV_REST_API_URL=
@@ -97,9 +101,10 @@ GET /api/rss?url=<target-url>
 | `fulltext` | ❌ | `false` | Set to `true` to include full article content |
 | `limit` | ❌ | `10` | Number of articles to extract (1-30) |
 | `format` | ❌ | `rss` | Output format: `rss` or `atom` |
-| `refresh` | ❌ | `false` | Set to `true` to force regeneration (bypass cache) |
+| `refresh` | ❌ | `false` | Refetch this URL without globally invalidating other feeds |
 | `source` | ❌ | `auto` | Markdown source: `auto`, `jina`, or `markdown` |
 | `markdownMethod` | ❌ | `auto` | markdown.new method: `auto`, `ai`, or `browser` |
+| `extract` | ❌ | `llm` | Extraction strategy: `llm`, `deterministic`, `auto`, or `shadow` |
 
 **Examples:**
 
@@ -118,6 +123,12 @@ curl "http://localhost:3000/api/rss?url=https://example.com/blog&refresh=true"
 
 # Force markdown.new instead of Jina
 curl "http://localhost:3000/api/rss?url=https://example.com/blog&source=markdown&markdownMethod=browser"
+
+# Test without any LLM call
+curl "http://localhost:3000/api/rss?url=https://example.com/blog&extract=deterministic"
+
+# Use a site adapter, process only new cards, and reuse persistent snapshots
+curl "http://localhost:3000/api/rss?url=https://example.com/blog&extract=auto"
 ```
 
 ### 2. Multi-Source Aggregated Feed
@@ -222,15 +233,22 @@ Set `DEEPSEEK_MODEL=your-model` to use a different DeepSeek model. `OPENAI_MODEL
 ## Architecture
 
 ```
-Request → Markdown fetcher (cached 24h) → LLM extracts JSON → XML Builder → Date Stabilisation → Response
-                                              │                    │               │
-                                       Structured JSON        Well-formed     Persistent Registry
-                                       (not raw XML)          RSS/Atom XML    (Redis or filesystem)
+Request → Markdown fetcher → Site adapter → Candidate URL diff
+                                           ├─ unchanged → persistent snapshot
+                                           ├─ new URLs → small incremental LLM request
+                                           └─ unsupported → full LLM fallback
+                                                        ↓
+                                        XML Builder → Date Stabilisation → Response
 ```
 
 Key design decisions:
 - **JSON → XML**: LLM outputs structured JSON, code builds XML. Eliminates all XML escaping issues.
-- **Fetcher Fallback**: `source=auto` keeps Jina as the first choice and uses markdown.new when Jina is unavailable.
+- **Fetcher Fallback**: `source=auto` tries both Jina Reader endpoints before
+  using markdown.new. JSON-wrapped markdown.new responses are unwrapped first.
+- **Extraction Modes**: `deterministic` is the experimental generic parser;
+  `auto` uses domain adapters plus persistent incremental snapshots; `shadow`
+  logs a generic-parser comparison while returning the LLM result. Unsupported
+  and full-text requests use the full LLM path.
 - **Date Registry**: Persistent storage ensures articles keep their original publication dates across regenerations.
 - **Lazy Client Init**: OpenAI client is initialized on first request, not at module load time (enables clean builds without API keys).
 

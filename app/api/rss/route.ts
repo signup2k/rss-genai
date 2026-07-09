@@ -2,7 +2,7 @@
 //
 // Generates RSS/Atom feeds from any webpage using:
 //   - Jina.ai Reader / markdown.new: fetches & converts webpages to markdown
-//   - OpenAI-compatible LLM: parses content into structured JSON
+//   - Deterministic Markdown parser with an OpenAI-compatible LLM fallback
 //   - Programmatic XML builder: generates well-formed RSS/Atom XML
 //   - Persistent registry (Upstash Redis on Vercel, file-system locally):
 //     prevents date drift & duplicate articles across regenerations
@@ -16,10 +16,25 @@
 //   source    (optional) — "auto" (default), "jina", or "markdown"
 
 import OpenAI from "openai";
-import { unstable_cache, revalidateTag } from "next/cache";
-import { loadRegistry, saveRegistry } from "@/lib/storage";
+import { unstable_cache } from "next/cache";
+import {
+    loadFeedSnapshot,
+    loadRegistry,
+    saveFeedSnapshot,
+    saveRegistry,
+} from "@/lib/storage";
 import { buildRSS, buildAtom, type RSSFeedData, type RSSItem } from "@/lib/xml-builder";
 import { resolveSelectors, type SiteSelectors } from "@/lib/site-selectors";
+import {
+    extractFeedDeterministically,
+    parseExtractionMode,
+    type ExtractionMode,
+} from "@/lib/deterministic-extractor";
+import {
+    buildCandidatePrompt,
+    extractArticleCandidates,
+    normalizeMarkdownPayload,
+} from "@/lib/candidate-extractor";
 
 // --- OpenAI-compatible client (lazy-initialized to avoid build-time errors) ---
 
@@ -75,8 +90,6 @@ function parseMarkdownMethod(value: string | null): MarkdownMethod {
 }
 
 async function fetchWithJina(url: string, selectors: SiteSelectors): Promise<string> {
-    const jinaUrl = `https://r.jina.ai/${url}`;
-    
     const headers: Record<string, string> = {
         "Accept": "text/markdown",
     };
@@ -93,15 +106,21 @@ async function fetchWithJina(url: string, selectors: SiteSelectors): Promise<str
         headers["X-Wait-For-Selector"] = selectors.waitForSelector;
     }
 
-    const response = await fetch(jinaUrl, {
-        headers,
-    });
-
-    if (!response.ok) {
-        throw new Error(`Jina Reader failed: ${response.status} ${response.statusText}`);
+    const endpoints = [
+        `https://r.jina.ai/${url}`,
+        `https://r.jinaai.cn/${url.replace(/^https?:\/\//, "")}`,
+    ];
+    let lastError: unknown;
+    for (const endpoint of endpoints) {
+        try {
+            const response = await fetch(endpoint, { headers });
+            if (response.ok) return response.text();
+            lastError = new Error(`Jina Reader failed: ${response.status} ${response.statusText}`);
+        } catch (error) {
+            lastError = error;
+        }
     }
-
-    return response.text();
+    throw lastError || new Error("All Jina Reader endpoints failed");
 }
 
 async function fetchWithMarkdownNew(url: string, method: MarkdownMethod): Promise<string> {
@@ -121,7 +140,7 @@ async function fetchWithMarkdownNew(url: string, method: MarkdownMethod): Promis
         throw new Error(`markdown.new failed: ${response.status} ${response.statusText}`);
     }
 
-    return response.text();
+    return normalizeMarkdownPayload(await response.text());
 }
 
 async function fetchPageContent(
@@ -221,6 +240,12 @@ RULES:
 interface LLMResult {
     feedData: RSSFeedData;
     modelUsed: string;
+}
+
+interface ExtractionResult extends LLMResult {
+    strategy: "llm" | "deterministic" | "incremental-llm" | "snapshot";
+    deterministicConfidence: number;
+    adapter: string;
 }
 
 function trimPageContent(pageContent: string): string {
@@ -333,8 +358,170 @@ const generateFeedData = unstable_cache(
     }
 );
 
+async function extractFeedData(
+    mode: ExtractionMode,
+    targetUrl: string,
+    pageContent: string,
+    limit: number,
+    fulltext: boolean
+): Promise<ExtractionResult> {
+    const deterministic = extractFeedDeterministically(targetUrl, pageContent, limit);
+
+    console.log(
+        `[Deterministic] confidence=${deterministic.confidence}, `
+        + `family=${deterministic.selectedFamily || "none"}, `
+        + deterministic.reasons.join(", ")
+    );
+
+    if (mode === "deterministic") {
+        if (fulltext) {
+            throw new Error("Deterministic extraction does not support fulltext mode yet");
+        }
+        if (deterministic.feedData.items.length === 0) {
+            throw new Error("Deterministic extraction found no usable feed items");
+        }
+        return {
+            feedData: deterministic.feedData,
+            modelUsed: "none",
+            strategy: "deterministic",
+            deterministicConfidence: deterministic.confidence,
+            adapter: "generic-deterministic",
+        };
+    }
+
+    if (mode === "auto" && !fulltext) {
+        const adapted = extractArticleCandidates(
+            targetUrl,
+            pageContent,
+            Math.min(Math.max(limit * 2, 10), 30)
+        );
+        if (adapted.supported && adapted.candidates.length > 0) {
+            const activeCandidates = adapted.candidates.slice(0, limit);
+            const candidateUrls = activeCandidates.map((candidate) => candidate.url);
+            const snapshotKey = `${targetUrl}|limit=${limit}|adapter=${adapted.adapter}`;
+
+            try {
+                const snapshot = await loadFeedSnapshot(snapshotKey);
+                if (
+                    snapshot
+                    && candidateUrls.length === snapshot.candidateUrls.length
+                    && candidateUrls.every((url, index) => url === snapshot.candidateUrls[index])
+                ) {
+                    console.log(`[Incremental] Snapshot HIT for ${targetUrl}; no LLM call`);
+                    return {
+                        feedData: snapshot.feedData,
+                        modelUsed: "none",
+                        strategy: "snapshot",
+                        deterministicConfidence: 1,
+                        adapter: adapted.adapter,
+                    };
+                }
+
+                const previousUrls = new Set(snapshot?.candidateUrls || []);
+                const newCandidates = activeCandidates.filter(
+                    (candidate) => !previousUrls.has(candidate.url)
+                );
+                let newItems: RSSItem[] = [];
+                let modelUsed = "none";
+                let channel = snapshot?.feedData.channel;
+
+                if (newCandidates.length > 0) {
+                    const candidatePrompt = buildCandidatePrompt(targetUrl, newCandidates);
+                    console.log(
+                        `[Incremental] ${newCandidates.length}/${activeCandidates.length} new candidates; `
+                        + `sending ${candidatePrompt.length} chars to LLM`
+                    );
+                    const generated = await generateFeedData(
+                        targetUrl,
+                        candidatePrompt,
+                        newCandidates.length,
+                        false
+                    );
+                    const allowedUrls = new Set(newCandidates.map((candidate) => canonicalUrl(candidate.url)));
+                    newItems = generated.feedData.items.filter(
+                        (item) => allowedUrls.has(canonicalUrl(item.link))
+                    );
+                    modelUsed = generated.modelUsed;
+                    channel = channel || generated.feedData.channel;
+                }
+
+                const itemByUrl = new Map<string, RSSItem>();
+                for (const item of snapshot?.feedData.items || []) {
+                    itemByUrl.set(canonicalUrl(item.link), item);
+                }
+                for (const item of newItems) {
+                    itemByUrl.set(canonicalUrl(item.link), item);
+                }
+
+                const mergedItems = activeCandidates
+                    .map((candidate) => itemByUrl.get(canonicalUrl(candidate.url)))
+                    .filter((item): item is RSSItem => Boolean(item))
+                    .slice(0, limit);
+
+                if (mergedItems.length > 0 && channel) {
+                    const feedData: RSSFeedData = { channel, items: mergedItems };
+                    const mergedUrls = new Set(mergedItems.map((item) => canonicalUrl(item.link)));
+                    const processedCandidateUrls = candidateUrls.filter(
+                        (url) => mergedUrls.has(canonicalUrl(url))
+                    );
+                    await saveFeedSnapshot(snapshotKey, {
+                        candidateUrls: processedCandidateUrls,
+                        feedData,
+                        updatedAtISO: new Date().toISOString(),
+                    });
+                    return {
+                        feedData,
+                        modelUsed,
+                        strategy: newCandidates.length > 0 ? "incremental-llm" : "snapshot",
+                        deterministicConfidence: mergedItems.length / activeCandidates.length,
+                        adapter: adapted.adapter,
+                    };
+                }
+                console.warn(`[Incremental] Adapter ${adapted.adapter} produced no mergeable items`);
+            } catch (error) {
+                console.warn(`[Incremental] Adapter ${adapted.adapter} failed; using full LLM:`, error);
+            }
+        } else {
+            console.log(`[Incremental] No supported adapter/candidates for ${targetUrl}; using full LLM`);
+        }
+    }
+
+    const llmPageContent = trimPageContent(pageContent);
+    if (llmPageContent.length !== pageContent.length) {
+        console.log(`[RSS-Gen] Truncated page content from ${pageContent.length} to ${llmPageContent.length} chars`);
+    }
+    const llmResult = await generateFeedData(targetUrl, llmPageContent, limit, fulltext);
+
+    if (mode === "shadow") {
+        const deterministicLinks = new Set(deterministic.feedData.items.map((item) => item.link));
+        const overlap = llmResult.feedData.items.filter((item) => deterministicLinks.has(item.link)).length;
+        console.log(
+            `[Shadow] deterministic=${deterministic.feedData.items.length}, `
+            + `llm=${llmResult.feedData.items.length}, link-overlap=${overlap}, `
+            + `confidence=${deterministic.confidence}`
+        );
+    }
+
+    return {
+        ...llmResult,
+        strategy: "llm",
+        deterministicConfidence: deterministic.confidence,
+        adapter: "none",
+    };
+}
+
+function canonicalUrl(value: string): string {
+    try {
+        const url = new URL(value);
+        const pathname = url.pathname.replace(/\/+$/, "") || "/";
+        return `${url.hostname.replace(/^www\./, "").toLowerCase()}${pathname}${url.search}`;
+    } catch {
+        return value.trim();
+    }
+}
+
 // --- Date stabilisation ---
-// After LLM extracts article data, we reconcile every item against the
+// After either extractor produces article data, we reconcile every item against the
 // persistent registry so that:
 //   1. Articles seen before keep their original pubDate (no date drift).
 //   2. Articles with "NO_DATE_FOUND" get the date they were first seen.
@@ -405,6 +592,7 @@ export async function GET(request: Request) {
                     refresh: "(optional) 'true' to force regeneration",
                     source: "(optional) 'auto' (default), 'jina', or 'markdown'",
                     markdownMethod: "(optional) markdown.new method: 'auto' (default), 'ai', or 'browser'",
+                    extract: "(optional) 'llm' (default), 'deterministic', 'auto', or 'shadow'",
                     target: "(optional) CSS selector for exact content to extract",
                     remove: "(optional) CSS selector for elements to remove",
                     waitfor: "(optional) CSS selector to wait for before extraction",
@@ -420,6 +608,9 @@ export async function GET(request: Request) {
     const refresh = searchParams.get("refresh") === "true";
     const source = parseMarkdownSource(searchParams.get("source"));
     const markdownMethod = parseMarkdownMethod(searchParams.get("markdownMethod"));
+    const extractionMode = parseExtractionMode(
+        searchParams.get("extract") || process.env.EXTRACTION_MODE || null
+    );
 
     const apiSelectors = {
         targetSelector: searchParams.get("target") || undefined,
@@ -428,12 +619,9 @@ export async function GET(request: Request) {
     };
     const selectors = await resolveSelectors(targetUrl, apiSelectors);
 
-    // --- Force cache invalidation if requested ---
+    // --- Refresh only this URL; never invalidate every feed globally ---
     if (refresh) {
         console.log(`[API] Force refresh requested for: ${targetUrl}`);
-        revalidateTag("rss-generation", { expire: 0 });
-        revalidateTag("jina-fetch", { expire: 0 });
-        revalidateTag("markdown-fetch", { expire: 0 });
     }
 
     // --- Step 1: Fetch webpage content as markdown (cached 24h) ---
@@ -443,14 +631,16 @@ export async function GET(request: Request) {
     try {
         console.log(`[API] Request for: ${targetUrl} (limit=${limit}, fulltext=${fulltext}, format=${format}, source=${source})`);
         const startTime = Date.now();
-        const fetchResult = await fetchPageContentCache(
-            targetUrl,
-            source,
-            markdownMethod,
-            selectors.targetSelector,
-            selectors.removeSelector,
-            selectors.waitForSelector
-        );
+        const fetchResult = refresh
+            ? await fetchPageContent(targetUrl, source, markdownMethod, selectors)
+            : await fetchPageContentCache(
+                targetUrl,
+                source,
+                markdownMethod,
+                selectors.targetSelector,
+                selectors.removeSelector,
+                selectors.waitForSelector
+            );
         pageContent = fetchResult.content;
         contentProvider = fetchResult.provider;
         contentFetchTime = Date.now() - startTime;
@@ -467,18 +657,23 @@ export async function GET(request: Request) {
         );
     }
 
-    // --- Step 2: Extract feed data via LLM (cached 24h) ---
+    // --- Step 2: Extract feed data deterministically and/or via LLM ---
     let cacheStatus = "MISS";
     try {
         const startTime = Date.now();
-        const llmPageContent = trimPageContent(pageContent);
-        if (llmPageContent.length !== pageContent.length) {
-            console.log(`[RSS-Gen] Truncated page content from ${pageContent.length} to ${llmPageContent.length} chars`);
-        }
-        const result = await generateFeedData(targetUrl, llmPageContent, limit, fulltext);
+        const result = await extractFeedData(
+            extractionMode,
+            targetUrl,
+            pageContent,
+            limit,
+            fulltext
+        );
         const duration = Date.now() - startTime;
         cacheStatus = duration < 100 ? "HIT" : "MISS";
-        console.log(`[RSS] ${cacheStatus} (${duration}ms) — ${result.feedData.items.length} articles`);
+        console.log(
+            `[RSS] ${cacheStatus} (${duration}ms) — ${result.feedData.items.length} articles `
+            + `via ${result.strategy}`
+        );
 
         // --- Step 3: Stabilise dates against persistent registry ---
         const stabilisedItems = await stabiliseDates(targetUrl, result.feedData.items);
@@ -498,6 +693,10 @@ export async function GET(request: Request) {
                 "Content-Type": contentType,
                 "Cache-Control": "s-maxage=86400, stale-while-revalidate=86400",
                 "X-Model-Used": result.modelUsed,
+                "X-Extraction-Mode": extractionMode,
+                "X-Extraction-Strategy": result.strategy,
+                "X-Deterministic-Confidence": `${result.deterministicConfidence}`,
+                "X-Extraction-Adapter": result.adapter || "none",
                 "X-Content-Source": contentProvider === "jina" ? "jina-reader-filtered" : "markdown.new",
                 "X-Markdown-Source": contentProvider,
                 "X-Markdown-Method": contentProvider === "markdown" ? markdownMethod : "n/a",

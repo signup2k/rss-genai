@@ -11,6 +11,7 @@
 import { createHash } from "crypto";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
+import type { RSSFeedData } from "@/lib/xml-builder";
 
 // --- Types ---
 
@@ -25,6 +26,12 @@ export interface UrlRegistry {
     [guid: string]: ArticleRecord;
 }
 
+export interface FeedSnapshot {
+    candidateUrls: string[];
+    feedData: RSSFeedData;
+    updatedAtISO: string;
+}
+
 export type GlobalSiteConfig = Record<string, {
     targetSelector?: string;
     removeSelector?: string;
@@ -36,6 +43,11 @@ export type GlobalSiteConfig = Record<string, {
 function registryKey(url: string): string {
     const hash = createHash("sha256").update(url).digest("hex").slice(0, 16);
     return `rss-registry:${hash}`;
+}
+
+function snapshotKey(key: string): string {
+    const hash = createHash("sha256").update(key).digest("hex").slice(0, 16);
+    return `rss-snapshot:${hash}`;
 }
 
 const GLOBAL_CONFIG_KEY = "rss-global-site-configs";
@@ -81,6 +93,11 @@ function fsPath(url: string): string {
     return join(REGISTRY_DIR, `${hash}.json`);
 }
 
+function fsSnapshotPath(key: string): string {
+    const hash = createHash("sha256").update(key).digest("hex").slice(0, 16);
+    return join(REGISTRY_DIR, `snapshot-${hash}.json`);
+}
+
 async function fsLoad(url: string): Promise<UrlRegistry> {
     try {
         const data = await readFile(fsPath(url), "utf-8");
@@ -97,6 +114,24 @@ async function fsSave(url: string, registry: UrlRegistry): Promise<void> {
     } catch (e) {
         // Silently fail if filesystem is truly unavailable — better than crashing
         console.warn("[Storage] File-system write failed (non-critical):", e);
+    }
+}
+
+async function fsLoadSnapshot(key: string): Promise<FeedSnapshot | null> {
+    try {
+        const data = await readFile(fsSnapshotPath(key), "utf-8");
+        return JSON.parse(data) as FeedSnapshot;
+    } catch {
+        return null;
+    }
+}
+
+async function fsSaveSnapshot(key: string, snapshot: FeedSnapshot): Promise<void> {
+    try {
+        await mkdir(REGISTRY_DIR, { recursive: true });
+        await writeFile(fsSnapshotPath(key), JSON.stringify(snapshot, null, 2), "utf-8");
+    } catch (e) {
+        console.warn("[Storage] File-system snapshot write failed (non-critical):", e);
     }
 }
 
@@ -150,6 +185,32 @@ export async function saveRegistry(url: string, registry: UrlRegistry): Promise<
         }
     }
     return fsSave(url, registry);
+}
+
+export async function loadFeedSnapshot(key: string): Promise<FeedSnapshot | null> {
+    const redis = await getRedis();
+    if (redis) {
+        try {
+            return await redis.get<FeedSnapshot>(snapshotKey(key));
+        } catch (e) {
+            console.warn("[Storage] Redis snapshot read failed, falling back to FS:", e);
+            return fsLoadSnapshot(key);
+        }
+    }
+    return fsLoadSnapshot(key);
+}
+
+export async function saveFeedSnapshot(key: string, snapshot: FeedSnapshot): Promise<void> {
+    const redis = await getRedis();
+    if (redis) {
+        try {
+            await redis.set(snapshotKey(key), snapshot);
+            return;
+        } catch (e) {
+            console.warn("[Storage] Redis snapshot write failed, falling back to FS:", e);
+        }
+    }
+    return fsSaveSnapshot(key, snapshot);
 }
 
 export async function loadGlobalSiteConfigs(): Promise<GlobalSiteConfig> {

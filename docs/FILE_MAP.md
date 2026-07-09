@@ -6,17 +6,17 @@ Last full audit: 2026-06-29 | Files mapped: 16
 
 ## Root
 
-### README.md (~78 lines, md, map-updated 2026-06-30)
+### README.md (~86 lines, md, map-updated 2026-07-09)
 Purpose: concise public API overview for RSS generation and feed merging.
 Structure:
-- API usage examples for `/api/rss`, `/api/rss/merge`, and `/api/rss/status`, including markdown source selection.
+- API usage examples for `/api/rss`, `/api/rss/merge`, and `/api/rss/status`, including markdown source and extraction-mode selection.
 Depends on: current Next.js route behavior.
 
-### SETUP.md (~255 lines, md, map-updated 2026-06-30)
+### SETUP.md (~273 lines, md, map-updated 2026-07-09)
 Purpose: setup and deployment guide covering OpenAI-compatible LLMs, Redis, Vercel, and troubleshooting.
 Structure:
-- Env var reference for `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, fallback OpenAI vars, Redis/KV, and admin password.
-- API examples, markdown source options, and deployment notes for Vercel.
+- Env var reference for LLM settings, `EXTRACTION_MODE`, Redis/KV, and admin password.
+- API examples, deterministic/auto/shadow extraction modes, markdown source options, and deployment notes for Vercel.
 Gotchas: provider-specific OpenAI-compatible behavior may differ from official OpenAI.
 
 ### package.json (~28 lines, json, map-updated 2026-06-29)
@@ -38,6 +38,12 @@ Structure:
 ### CLAUDE.md (~1 line, md, map-updated 2026-06-29)
 Purpose: instructs coding agents to use this file map before exploration.
 
+### docs/DETERMINISTIC_EXTRACTION_TEST_PLAN.md (~114 lines, md, map-updated 2026-07-09)
+Purpose: defines acceptance criteria and records the live feasibility run for deterministic Markdown extraction.
+Structure:
+- Prototype algorithm, quality thresholds, production safety checks, and results from four representative live pages.
+Gotchas: the successful test validates deterministic-first feasibility, not an unconditional replacement for the LLM fallback.
+
 ## app
 
 ### app/layout.tsx (~34 lines, tsx, map-updated 2026-06-29)
@@ -58,23 +64,23 @@ Purpose: global Tailwind/CSS styling for the app shell.
 
 ## app/api
 
-### app/api/rss/route.ts (~523 lines, ts, map-updated 2026-06-30)
-Purpose: primary RSS/Atom generator endpoint; fetches webpage markdown, asks an LLM for structured feed data, stabilizes dates, and emits XML.
+### app/api/rss/route.ts (~722 lines, ts, map-updated 2026-07-09)
+Purpose: primary RSS/Atom endpoint; fetches normalized Markdown, runs full or adapter-incremental extraction, stabilizes dates, and emits XML.
 Structure:
 - `getOpenAI` (L25): lazy OpenAI SDK client using `DEEPSEEK_API_KEY`, DeepSeek base URL, and OpenAI env var fallbacks.
 - `fetchWithJina` / `fetchWithMarkdownNew` / `fetchPageContentCache` (L77): markdown fetching via Jina first, with markdown.new fallback and 24h cache.
 - `buildSystemPrompt` (L186): schema and extraction rules for JSON-mode LLM output.
 - `trimPageContent` / `normaliseItems` (L226): caps LLM input at 100k chars and filters unusable LLM item rows.
 - `generateFeedData` (L261): model loop, `response_format: { type: "json_object" }`, JSON parsing, structure validation.
-- `stabiliseDates` (L343): reconciles item dates against persistent registry.
-- `GET` (L390): query parsing, cache invalidation, fetch/generate/build response pipeline.
-Depends on: `openai`, Next cache APIs, `lib/storage`, `lib/xml-builder`, `lib/site-selectors`.
+- `extractFeedData`: implements full `llm`, experimental `deterministic`, adapter/snapshot `auto`, and comparison-only `shadow`.
+- `stabiliseDates` / `GET`: persistent date reconciliation and the fetch/extract/build response pipeline.
+Depends on: `openai`, Next cache APIs, `lib/candidate-extractor`, `lib/deterministic-extractor`, `lib/storage`, `lib/xml-builder`, `lib/site-selectors`.
 Gotchas: OpenAI-compatible JSON mode can reject requests unless input messages explicitly contain lowercase `json`; keep both system and user prompts explicit. Jina selector params do not apply to markdown.new.
 
-### app/api/rss/merge/route.ts (~182 lines, ts, map-updated 2026-06-30)
+### app/api/rss/merge/route.ts (~186 lines, ts, map-updated 2026-07-09)
 Purpose: merges multiple generated RSS feeds into a single RSS/Atom feed.
 Structure:
-- `GET`: validates `urls`, forwards source options, fetches internal `/api/rss` for each source, extracts items, sorts by pubDate, and rebuilds XML.
+- `GET`: validates `urls`, forwards source and extraction options, fetches internal `/api/rss` for each source, extracts items, sorts by pubDate, and rebuilds XML.
 - `unescapeXml`: reverses XML escaping before passing items back to the XML builder.
 Depends on: `lib/xml-builder`.
 Gotchas: parses its own RSS output with regex, which is acceptable only because this project controls the XML shape.
@@ -96,6 +102,22 @@ Gotchas: default admin password is present when `ADMIN_PASSWORD` is unset.
 
 ## lib
 
+### lib/candidate-extractor.ts (~269 lines, ts, map-updated 2026-07-09)
+Purpose: normalizes provider payloads and extracts bounded article-card candidates for incremental LLM processing.
+Structure:
+- `normalizeMarkdownPayload`: unwraps markdown.new JSON responses.
+- `extractArticleCandidates`: routes to adapters for Bridgewater, CSIS, DB Research, Morgan Stanley, and Citadel Securities.
+- `buildCandidatePrompt`: serializes only new candidate blocks for the LLM.
+Gotchas: unsupported domains intentionally return no candidates and use the full LLM path.
+
+### lib/deterministic-extractor.ts (~249 lines, ts, map-updated 2026-07-09)
+Purpose: extracts feed items from reader Markdown without an LLM and reports a confidence score.
+Structure:
+- `parseExtractionMode`: validates `llm`, `deterministic`, `auto`, and `shadow`.
+- `extractFeedDeterministically`: filters Markdown links, finds the dominant permalink family, preserves source order, cleans titles/dates, and builds feed data.
+Depends on: RSS feed types from `lib/xml-builder`.
+Gotchas: confidence measures structural consistency, not semantic correctness; full-text extraction remains outside this module.
+
 ### lib/default-configs.ts (~20 lines, ts, map-updated 2026-06-29)
 Purpose: built-in domain selector defaults for common sites.
 Structure:
@@ -110,13 +132,13 @@ Structure:
 - `resolveSelectors`: applies precedence API params > saved/default > fallback removal selector.
 Depends on: `lib/storage`, `lib/default-configs`.
 
-### lib/storage.ts (~180 lines, ts, map-updated 2026-06-29)
-Purpose: storage abstraction for article date registries and global selector configs.
+### lib/storage.ts (~241 lines, ts, map-updated 2026-07-09)
+Purpose: storage abstraction for article date registries, incremental feed snapshots, and global selector configs.
 Structure:
 - Types: `ArticleRecord`, `UrlRegistry`, `GlobalSiteConfig`.
 - Redis backend: lazy Upstash Redis initialization from Vercel KV/Upstash env vars.
 - File backend: `.rss-cache/` locally or `/tmp/.rss-cache` on Vercel.
-- Public API: `loadRegistry`, `saveRegistry`, `loadGlobalSiteConfigs`, `saveGlobalSiteConfigs`.
+- Public API includes registry, feed snapshot, and global selector load/save pairs.
 Depends on: `crypto`, `fs/promises`, `path`, `@upstash/redis`.
 Gotchas: production filesystem fallback is not durable; Redis env vars are needed for persistence across cold starts.
 

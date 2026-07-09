@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-07-09
+
+- Added domain-adapted article candidate extraction for Bridgewater, CSIS,
+  Deutsche Bank Research, Morgan Stanley, and Citadel Securities.
+- Changed `extract=auto` to send only newly discovered candidate cards to the
+  LLM and reuse persistent Redis/file snapshots when candidate URLs are unchanged.
+- Added markdown.new JSON payload normalization and a China-accessible Jina
+  Reader fallback endpoint.
+- Kept unsupported and full-text pages on the existing full LLM path.
+- Made `refresh=true` URL-scoped instead of invalidating every feed cache.
+- Added extraction strategy, adapter, confidence, and model response headers.
+- Added and documented `llm`, `deterministic`, `auto`, and `shadow` modes.
+
+Validation:
+- Live first-run incremental and second-run zero-LLM snapshot checks passed for
+  all five configured domains.
+- `npm run lint` passed.
+- `npm run build` passed.
+
 ## 2026-06-30
 
 - Added `source=auto|jina|markdown` and `markdownMethod=auto|ai|browser` support for webpage markdown fetching.

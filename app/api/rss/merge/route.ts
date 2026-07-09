@@ -11,6 +11,7 @@
 //   format    (optional) — "rss" (default) or "atom"
 //   source    (optional) — "auto" (default), "jina", or "markdown"
 //   markdownMethod (optional) — markdown.new method: "auto" (default), "ai", or "browser"
+//   extract   (optional) — "llm" (default), "deterministic", "auto", or "shadow"
 
 import { buildRSS, buildAtom, type RSSFeedData, type RSSItem } from "@/lib/xml-builder";
 
@@ -31,6 +32,7 @@ export async function GET(request: Request) {
                     format: "(optional) 'rss' (default) or 'atom'",
                     source: "(optional) 'auto' (default), 'jina', or 'markdown'",
                     markdownMethod: "(optional) markdown.new method: 'auto' (default), 'ai', or 'browser'",
+                    extract: "(optional) 'llm' (default), 'deterministic', 'auto', or 'shadow'",
                 },
             }, null, 2),
             { status: 400, headers: { "Content-Type": "application/json" } }
@@ -58,6 +60,7 @@ export async function GET(request: Request) {
     const format = searchParams.get("format") === "atom" ? "atom" : "rss";
     const source = searchParams.get("source");
     const markdownMethod = searchParams.get("markdownMethod");
+    const extract = searchParams.get("extract");
 
     // Build the internal API URL base (same origin)
     const origin = new URL(request.url).origin;
@@ -71,6 +74,7 @@ export async function GET(request: Request) {
                 ...(fulltext ? { fulltext: "true" } : {}),
                 ...(source ? { source } : {}),
                 ...(markdownMethod ? { markdownMethod } : {}),
+                ...(extract ? { extract } : {}),
                 format: "rss", // always fetch as RSS internally for parsing
             });
 
