@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import type { GlobalSiteConfig } from "@/lib/storage";
 
 export default function Home() {
-  const [password, setPassword] = useState("");
   const [configs, setConfigs] = useState<GlobalSiteConfig>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -16,6 +15,7 @@ export default function Home() {
   const [genRemove, setGenRemove] = useState("");
   const [genWait, setGenWait] = useState("");
   const [genFulltext, setGenFulltext] = useState(false);
+  const [genExtract, setGenExtract] = useState("auto");
   const [genSource, setGenSource] = useState("auto");
   const [genMarkdownMethod, setGenMarkdownMethod] = useState("auto");
   const [generatedLink, setGeneratedLink] = useState("");
@@ -49,6 +49,7 @@ export default function Home() {
       if (genRemove) apiUrl.searchParams.set("remove", genRemove);
       if (genWait) apiUrl.searchParams.set("waitfor", genWait);
       if (genFulltext) apiUrl.searchParams.set("fulltext", "true");
+      if (genExtract !== "auto") apiUrl.searchParams.set("extract", genExtract);
       if (genSource !== "auto") apiUrl.searchParams.set("source", genSource);
       if (genMarkdownMethod !== "auto") apiUrl.searchParams.set("markdownMethod", genMarkdownMethod);
       setGeneratedLink(apiUrl.toString());
@@ -65,7 +66,6 @@ export default function Home() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-password": password,
         },
         body: JSON.stringify(newConfigs),
       });
@@ -78,7 +78,7 @@ export default function Home() {
       setNewRemove("");
       setNewWait("");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to save configs (Check password)");
+      setError(e instanceof Error ? e.message : "Failed to save configs");
     }
     setSaving(false);
   };
@@ -165,6 +165,19 @@ export default function Home() {
               />
             </div>
             <div>
+              <label className="block text-sm font-medium mb-1">Extraction Mode</label>
+              <select
+                value={genExtract}
+                onChange={(e) => setGenExtract(e.target.value)}
+                className="w-full px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="auto">Auto (recommended)</option>
+                <option value="llm">LLM only</option>
+                <option value="deterministic">Deterministic</option>
+                <option value="shadow">Shadow comparison</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-sm font-medium mb-1">Content Source</label>
               <select
                 value={genSource}
@@ -196,7 +209,7 @@ export default function Home() {
                   onChange={(e) => setGenFulltext(e.target.checked)}
                   className="rounded border-zinc-300 text-blue-600 focus:ring-blue-500 w-5 h-5"
                 />
-                <span className="text-sm font-medium">Include Fulltext Content</span>
+                <span className="text-sm font-medium">Fetch Article Fulltext (Best Effort)</span>
               </label>
             </div>
           </div>
@@ -225,16 +238,6 @@ export default function Home() {
         <section className="bg-white dark:bg-zinc-900 rounded-xl p-6 shadow-sm border border-zinc-200 dark:border-zinc-800">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-semibold">⚙️ Global Site Configs</h2>
-            <div className="flex items-center space-x-3">
-              <label className="text-sm font-medium text-zinc-500">Admin Password:</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Required for saving"
-                className="px-3 py-1.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent focus:ring-2 focus:ring-blue-500 outline-none text-sm w-40"
-              />
-            </div>
           </div>
 
           <div className="overflow-x-auto">

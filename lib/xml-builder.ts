@@ -32,7 +32,7 @@ export interface RSSFeedData {
 
 /** Escape text for safe inclusion in XML text nodes */
 export function escapeXml(str: string): string {
-    return str
+    return cleanXmlText(str)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
@@ -40,10 +40,27 @@ export function escapeXml(str: string): string {
         .replace(/'/g, "&apos;");
 }
 
+function cleanXmlText(str: string): string {
+    return str.replace(
+        // XML 1.0 permits tab, LF, CR, and characters from U+0020 upward.
+        /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,
+        ""
+    );
+}
+
 /** Wrap content in CDATA section (for HTML-heavy content like full articles) */
 function wrapCDATA(str: string): string {
     // CDATA cannot contain "]]>", so split if found
-    return `<![CDATA[${str.replace(/\]\]>/g, "]]]]><![CDATA[>")}]]>`;
+    return `<![CDATA[${cleanXmlText(str).replace(/\]\]>/g, "]]]]><![CDATA[>")}]]>`;
+}
+
+function feedUpdatedAt(feed: RSSFeedData): Date {
+    const timestamps = feed.items
+        .map((item) => new Date(item.pubDate).getTime())
+        .filter((timestamp) => !Number.isNaN(timestamp));
+    return timestamps.length > 0
+        ? new Date(Math.max(...timestamps))
+        : new Date();
 }
 
 // --- Builders ---
@@ -58,7 +75,7 @@ export function buildRSS(feed: RSSFeedData): string {
     lines.push(`  <title>${escapeXml(feed.channel.title)}</title>`);
     lines.push(`  <link>${escapeXml(feed.channel.link)}</link>`);
     lines.push(`  <description>${escapeXml(feed.channel.description)}</description>`);
-    lines.push(`  <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>`);
+    lines.push(`  <lastBuildDate>${feedUpdatedAt(feed).toUTCString()}</lastBuildDate>`);
     lines.push(`  <generator>RSS-GenAI</generator>`);
 
     for (const item of feed.items) {
@@ -107,7 +124,7 @@ export function buildAtom(feed: RSSFeedData): string {
     lines.push(`  <link href="${escapeXml(feed.channel.link)}" rel="alternate"/>`);
     lines.push(`  <id>${escapeXml(feed.channel.link)}</id>`);
     lines.push(`  <subtitle>${escapeXml(feed.channel.description)}</subtitle>`);
-    lines.push(`  <updated>${new Date().toISOString()}</updated>`);
+    lines.push(`  <updated>${feedUpdatedAt(feed).toISOString()}</updated>`);
     lines.push(`  <generator>RSS-GenAI</generator>`);
 
     for (const item of feed.items) {

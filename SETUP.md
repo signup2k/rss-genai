@@ -12,7 +12,7 @@ This project generates RSS/Atom feeds from any webpage using:
 
 ✅ **No Duplicate Articles**: GUID-based deduplication with persistent date tracking  
 ✅ **Structured Output**: LLM outputs JSON → code builds XML (no more XML escaping issues)  
-✅ **Model Fallback**: Automatic fallback through multiple models on rate limits  
+✅ **Source-Backed Links**: LLM output is constrained to URLs present in the source page
 ✅ **Full-Text RSS**: Optional full article content in feed entries  
 ✅ **Multi-Source Aggregation**: Merge multiple sites into a single feed  
 ✅ **Atom Support**: Generate RSS 2.0 or Atom feeds  
@@ -42,9 +42,9 @@ DEEPSEEK_MODEL=
 # OPENAI_BASE_URL=
 # OPENAI_MODEL=
 
-# Optional extraction default: llm, deterministic, auto, or shadow
-# Keep "llm" during rollout; use "auto" after comparing actual subscriptions.
-EXTRACTION_MODE=llm
+# Optional extraction default: auto, llm, deterministic, or shadow
+# If omitted, auto is used.
+EXTRACTION_MODE=auto
 
 # Optional (Vercel): Upstash Redis for persistent article date registry
 # These are auto-injected when you add Upstash Redis via Vercel Marketplace
@@ -98,13 +98,13 @@ GET /api/rss?url=<target-url>
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `url` | ✅ | — | Target webpage URL |
-| `fulltext` | ❌ | `false` | Set to `true` to include full article content |
+| `fulltext` | ❌ | `false` | Fetch article Markdown as full text (best effort) |
 | `limit` | ❌ | `10` | Number of articles to extract (1-30) |
 | `format` | ❌ | `rss` | Output format: `rss` or `atom` |
-| `refresh` | ❌ | `false` | Refetch this URL without globally invalidating other feeds |
+| `refresh` | ❌ | `false` | Bypass page, LLM, link-health, and snapshot caches for this feed |
 | `source` | ❌ | `auto` | Markdown source: `auto`, `jina`, or `markdown` |
 | `markdownMethod` | ❌ | `auto` | markdown.new method: `auto`, `ai`, or `browser` |
-| `extract` | ❌ | `llm` | Extraction strategy: `llm`, `deterministic`, `auto`, or `shadow` |
+| `extract` | ❌ | `auto` | Extraction strategy: `auto`, `llm`, `deterministic`, or `shadow` |
 
 **Examples:**
 
@@ -134,7 +134,7 @@ curl "http://localhost:3000/api/rss?url=https://example.com/blog&extract=auto"
 ### 2. Multi-Source Aggregated Feed
 
 ```
-GET /api/rss/merge?urls=<url1>,<url2>,...
+GET /api/rss/merge?url=<url1>&url=<url2>
 ```
 
 Combines multiple sources into a single feed, sorted by date.
@@ -143,7 +143,7 @@ Combines multiple sources into a single feed, sorted by date.
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `urls` | ✅ | — | Comma-separated list of target URLs (max 10) |
+| `url` | ✅ | — | Repeated target URL parameter (max 10); comma-separated `urls` is also accepted |
 | `title` | ❌ | Auto-generated | Custom title for the merged feed |
 | `limit` | ❌ | `10` | Articles per source (1-30) |
 | `fulltext` | ❌ | `false` | Include full article content |
@@ -154,7 +154,7 @@ Combines multiple sources into a single feed, sorted by date.
 **Example:**
 
 ```bash
-curl "http://localhost:3000/api/rss/merge?urls=https://blog1.com,https://blog2.com&title=My+Tech+Feed"
+curl "http://localhost:3000/api/rss/merge?url=https://blog1.com&url=https://blog2.com&title=My+Tech+Feed"
 ```
 
 ### 3. Feed Status / Health Check
@@ -201,14 +201,16 @@ Monitor these headers to understand caching and processing:
 
 | Header | Values | Description |
 |--------|--------|-------------|
-| `X-RSS-Cache-Status` | `HIT` / `MISS` | RSS generation cache status |
-| `X-Markdown-Cache-Status` | `HIT` / `MISS` | Webpage content fetch cache status |
+| `X-RSS-Cache-Status` | `SNAPSHOT` / `MANAGED` / `BYPASS` | RSS generation cache behavior |
+| `X-Markdown-Cache-Status` | `MANAGED` / `BYPASS` | Webpage content cache behavior |
 | `X-Markdown-Source` | `jina` / `markdown` | Provider used for webpage markdown |
 | `X-Markdown-Method` | `auto` / `ai` / `browser` / `n/a` | markdown.new method when used |
 | `X-Model-Used` | Model name | Which LLM model was used |
 | `X-Article-Count` | Number | Articles in the feed |
 | `X-Feed-Format` | `rss` / `atom` | Output format |
 | `X-Fulltext` | `true` / `false` | Whether full-text mode is active |
+| `X-Fulltext-Count` | Number | Entries successfully enriched with article content |
+| `X-Target-Rewritten` | `true` / `false` | Whether a known legacy source URL was transparently migrated |
 | `X-Markdown-Fetch-Time` | Duration | Time to fetch webpage content |
 
 ## Markdown Fetching
@@ -238,17 +240,19 @@ Request → Markdown fetcher → Site adapter → Candidate URL diff
                                            ├─ new URLs → small incremental LLM request
                                            └─ unsupported → full LLM fallback
                                                         ↓
-                                        XML Builder → Date Stabilisation → Response
+                          Link Check → Date Stabilisation → Fulltext → XML Response
 ```
 
 Key design decisions:
-- **JSON → XML**: LLM outputs structured JSON, code builds XML. Eliminates all XML escaping issues.
+- **JSON → XML**: LLM outputs structured JSON; code validates URLs and builds XML.
 - **Fetcher Fallback**: `source=auto` tries both Jina Reader endpoints before
   using markdown.new. JSON-wrapped markdown.new responses are unwrapped first.
 - **Extraction Modes**: `deterministic` is the experimental generic parser;
   `auto` uses domain adapters plus persistent incremental snapshots; `shadow`
   logs a generic-parser comparison while returning the LLM result. Unsupported
-  and full-text requests use the full LLM path.
+  sites use the full LLM path.
+- **Full Text**: When requested, each accepted article is fetched separately and
+  its Markdown is added on a best-effort basis.
 - **Date Registry**: Persistent storage ensures articles keep their original publication dates across regenerations.
 - **Lazy Client Init**: OpenAI client is initialized on first request, not at module load time (enables clean builds without API keys).
 
@@ -258,7 +262,7 @@ Key design decisions:
 
 **Empty/Invalid RSS**: The webpage might not have article-like content, or content filtering may be too aggressive
 
-**Rate Limits**: The API automatically falls back to alternative models on 429 errors
+**Rate Limits**: Wait for the configured model quota to recover, or configure another model.
 
 **Duplicate Articles in RSS Reader**: Use `refresh=true` to force regeneration. Check `/api/rss/status?url=...` to see tracked articles.
 

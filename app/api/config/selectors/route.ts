@@ -1,13 +1,25 @@
 import { loadGlobalSiteConfigs, saveGlobalSiteConfigs, type GlobalSiteConfig } from "@/lib/storage";
 
-function checkAuth(request: Request) {
-    const authHeader = request.headers.get("x-admin-password");
-    const adminPassword = process.env.ADMIN_PASSWORD || "rss-genai-2k";
+function isGlobalSiteConfig(value: unknown): value is GlobalSiteConfig {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length > 200) return false;
 
-    if (authHeader !== adminPassword) {
-        return false;
-    }
-    return true;
+    return entries.every(([hostname, config]) => {
+        if (
+            !/^[a-z0-9.-]+$/i.test(hostname)
+            || !config
+            || typeof config !== "object"
+            || Array.isArray(config)
+        ) {
+            return false;
+        }
+        const record = config as Record<string, unknown>;
+        return ["targetSelector", "removeSelector", "waitForSelector"].every((key) => (
+            record[key] === undefined
+            || (typeof record[key] === "string" && record[key].length <= 1_000)
+        ));
+    });
 }
 
 export async function GET() {
@@ -26,15 +38,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-    if (!checkAuth(request)) {
-        return new Response(JSON.stringify({ error: "Unauthorized" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" }
-        });
-    }
-
     try {
-        const body = await request.json() as GlobalSiteConfig;
+        const body: unknown = await request.json();
+        if (!isGlobalSiteConfig(body)) {
+            throw new Error("Invalid selector configuration");
+        }
         await saveGlobalSiteConfigs(body);
         return new Response(JSON.stringify({ success: true }), {
             status: 200,

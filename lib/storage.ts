@@ -8,8 +8,8 @@
 // ephemeral Vercel Serverless Function filesystem and lost on every cold start,
 // causing "phantom new articles" in RSS readers.
 
-import { createHash } from "crypto";
-import { readFile, writeFile, mkdir } from "fs/promises";
+import { createHash, randomUUID } from "crypto";
+import { readFile, writeFile, mkdir, rename } from "fs/promises";
 import { join } from "path";
 import type { RSSFeedData } from "@/lib/xml-builder";
 
@@ -27,7 +27,9 @@ export interface UrlRegistry {
 }
 
 export interface FeedSnapshot {
+    version: number;
     candidateUrls: string[];
+    candidateFingerprints: string[];
     feedData: RSSFeedData;
     updatedAtISO: string;
 }
@@ -98,6 +100,12 @@ function fsSnapshotPath(key: string): string {
     return join(REGISTRY_DIR, `snapshot-${hash}.json`);
 }
 
+async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
+    const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporaryPath, JSON.stringify(value, null, 2), "utf-8");
+    await rename(temporaryPath, path);
+}
+
 async function fsLoad(url: string): Promise<UrlRegistry> {
     try {
         const data = await readFile(fsPath(url), "utf-8");
@@ -110,7 +118,7 @@ async function fsLoad(url: string): Promise<UrlRegistry> {
 async function fsSave(url: string, registry: UrlRegistry): Promise<void> {
     try {
         await mkdir(REGISTRY_DIR, { recursive: true });
-        await writeFile(fsPath(url), JSON.stringify(registry, null, 2), "utf-8");
+        await writeJsonAtomically(fsPath(url), registry);
     } catch (e) {
         // Silently fail if filesystem is truly unavailable — better than crashing
         console.warn("[Storage] File-system write failed (non-critical):", e);
@@ -129,7 +137,7 @@ async function fsLoadSnapshot(key: string): Promise<FeedSnapshot | null> {
 async function fsSaveSnapshot(key: string, snapshot: FeedSnapshot): Promise<void> {
     try {
         await mkdir(REGISTRY_DIR, { recursive: true });
-        await writeFile(fsSnapshotPath(key), JSON.stringify(snapshot, null, 2), "utf-8");
+        await writeJsonAtomically(fsSnapshotPath(key), snapshot);
     } catch (e) {
         console.warn("[Storage] File-system snapshot write failed (non-critical):", e);
     }
@@ -151,7 +159,7 @@ async function fsLoadGlobalConfigs(): Promise<GlobalSiteConfig> {
 async function fsSaveGlobalConfigs(configs: GlobalSiteConfig): Promise<void> {
     try {
         await mkdir(REGISTRY_DIR, { recursive: true });
-        await writeFile(fsGlobalConfigPath(), JSON.stringify(configs, null, 2), "utf-8");
+        await writeJsonAtomically(fsGlobalConfigPath(), configs);
     } catch (e) {
         console.warn("[Storage] File-system global config write failed (non-critical):", e);
     }

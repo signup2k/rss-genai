@@ -1,4 +1,8 @@
 import type { RSSFeedData, RSSItem } from "@/lib/xml-builder";
+import {
+    canonicalArticleUrl,
+    normalizeArticleUrl,
+} from "@/lib/url-utils";
 
 export type ExtractionMode = "llm" | "deterministic" | "auto" | "shadow";
 
@@ -139,10 +143,15 @@ function pageTitle(markdown: string, targetUrl: URL): string {
 }
 
 export function parseExtractionMode(value: string | null): ExtractionMode {
-    if (value === "deterministic" || value === "auto" || value === "shadow") {
+    if (
+        value === "llm"
+        || value === "deterministic"
+        || value === "auto"
+        || value === "shadow"
+    ) {
         return value;
     }
-    return "llm";
+    return "auto";
 }
 
 export function extractFeedDeterministically(
@@ -157,13 +166,9 @@ export function extractFeedDeterministically(
     for (const match of markdown.matchAll(MARKDOWN_LINK_PATTERN)) {
         const rawTitle = cleanMarkdownText(match[1]);
         const title = cleanTitle(rawTitle);
-        let url: URL;
-        try {
-            url = new URL(match[2], targetUrl);
-            url.hash = "";
-        } catch {
-            continue;
-        }
+        const normalizedUrl = normalizeArticleUrl(match[2], targetUrl.href);
+        if (!normalizedUrl) continue;
+        const url = new URL(normalizedUrl);
 
         if (!isArticleCandidate(title, url, targetUrl)) {
             continue;
@@ -171,7 +176,8 @@ export function extractFeedDeterministically(
 
         const family = normalizeFamily(url.pathname);
         if (!family) continue;
-        const existing = candidatesByUrl.get(url.href);
+        const identity = canonicalArticleUrl(url.href);
+        const existing = candidatesByUrl.get(identity);
         if (existing) {
             if (
                 existing.title.length > 120
@@ -193,7 +199,7 @@ export function extractFeedDeterministically(
             pubDate: extractDate(markdown, match.index, rawTitle, url),
         };
         candidates.push(candidate);
-        candidatesByUrl.set(url.href, candidate);
+        candidatesByUrl.set(identity, candidate);
     }
 
     const familyCounts = new Map<string, number>();

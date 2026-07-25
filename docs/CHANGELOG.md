@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-07-25
+
+- Preserved the target protocol in both Jina Reader endpoint URLs.
+- Added centralized target/article URL validation, source URL allowlisting,
+  HTTPS normalization, tracking-parameter cleanup, and consistent link/GUID use.
+- Made adapter candidates authoritative so the LLM cannot rewrite article URLs.
+- Versioned incremental snapshots, included candidate content fingerprints, and
+  made `refresh=true` bypass page, LLM, link-health, and snapshot caches.
+- Changed the default extraction mode to `auto`.
+- Transparently migrated the retired Deutsche Bank Research URL to
+  `equityview.research.db.com` and excluded image assets from its adapter.
+- Added cached 404/410 link checks and best-effort per-article full-text fetching.
+- Reduced feed/Markdown cache windows from 24 hours to 30 minutes.
+- Removed the dashboard password, while adding selector payload validation.
+- Deduplicated merged items, supported repeated `url` parameters, handled
+  all-source failure explicitly, and fixed CDATA/entity handling.
+- Removed invalid XML control characters and stabilized feed update timestamps.
+
+Validation:
+- Live legacy Deutsche Bank auto extraction returned three current HTTPS PDF links.
+- A second Deutsche Bank request reused the versioned snapshot with no LLM call.
+- Live Morgan Stanley extraction returned only HTTPS article links.
+- Live full-text extraction populated `content:encoded`.
+- `npm run lint` passed.
+- `npm run build` passed.
+
 ## 2026-07-09
 
 - Added domain-adapted article candidate extraction for Bridgewater, CSIS,

@@ -1,3 +1,8 @@
+import {
+    canonicalArticleUrl,
+    normalizeArticleUrl,
+} from "@/lib/url-utils";
+
 export interface ArticleCandidate {
     url: string;
     titleHint: string;
@@ -52,14 +57,13 @@ function parseLinks(line: string): LinkMatch[] {
     return links;
 }
 
-function resolveUrl(rawUrl: string, targetUrl: URL): URL | null {
-    try {
-        const url = new URL(rawUrl, targetUrl);
-        url.hash = "";
-        return url;
-    } catch {
-        return null;
-    }
+function resolveUrl(
+    rawUrl: string,
+    targetUrl: URL,
+    allowedHosts: string[]
+): URL | null {
+    const normalized = normalizeArticleUrl(rawUrl, targetUrl.href, allowedHosts);
+    return normalized ? new URL(normalized) : null;
 }
 
 function block(lines: string[], start: number, before = 1, after = 6): string {
@@ -72,8 +76,9 @@ function block(lines: string[], start: number, before = 1, after = 6): string {
 function deduplicate(candidates: ArticleCandidate[], limit: number): ArticleCandidate[] {
     const seen = new Set<string>();
     return candidates.filter((candidate) => {
-        if (seen.has(candidate.url)) return false;
-        seen.add(candidate.url);
+        const identity = canonicalArticleUrl(candidate.url);
+        if (seen.has(identity)) return false;
+        seen.add(identity);
         return true;
     }).slice(0, limit);
 }
@@ -82,7 +87,7 @@ function bridgewaterCandidates(lines: string[], targetUrl: URL): ArticleCandidat
     const candidates: ArticleCandidate[] = [];
     for (let index = 0; index < lines.length; index++) {
         for (const link of parseLinks(lines[index])) {
-            const url = resolveUrl(link.url, targetUrl);
+            const url = resolveUrl(link.url, targetUrl, ["bridgewater.com"]);
             if (!url || !url.pathname.startsWith("/research-and-insights/")) continue;
             const title = link.title || link.destinationTitle;
             if (title.length < 12) continue;
@@ -105,7 +110,7 @@ function csisCandidates(lines: string[], targetUrl: URL): ArticleCandidate[] {
     for (let index = Math.max(contentStart, 0); index < lines.length; index++) {
         if (!/^###\s+\[/.test(lines[index].trim())) continue;
         for (const link of parseLinks(lines[index])) {
-            const url = resolveUrl(link.url, targetUrl);
+            const url = resolveUrl(link.url, targetUrl, ["csis.org"]);
             if (
                 !url
                 || url.hostname.replace(/^www\./, "") !== "csis.org"
@@ -127,8 +132,15 @@ function dbResearchCandidates(lines: string[], targetUrl: URL): ArticleCandidate
     const candidates: ArticleCandidate[] = [];
     for (let index = 0; index < lines.length; index++) {
         for (const link of parseLinks(lines[index])) {
-            const url = resolveUrl(link.url, targetUrl);
-            if (!url || !/\/PROD\/IE-PROD\/PROD\d+/i.test(decodeURIComponent(url.pathname))) {
+            const url = resolveUrl(link.url, targetUrl, [
+                "dbresearch.com",
+                "equityview.research.db.com",
+            ]);
+            if (
+                !url
+                || !/\/PROD\/IE-PROD\/PROD\d+/i.test(decodeURIComponent(url.pathname))
+                || /\.(?:gif|jpe?g|png|svg|webp)$/i.test(url.pathname)
+            ) {
                 continue;
             }
 
@@ -162,7 +174,7 @@ function morganStanleyCandidates(lines: string[], targetUrl: URL): ArticleCandid
             ? [{ title: cleanText(match[1]), url: match[2], destinationTitle: "" }]
             : parseLinks(lines[index]);
         for (const link of links) {
-            const url = resolveUrl(link.url, targetUrl);
+            const url = resolveUrl(link.url, targetUrl, ["morganstanley.com"]);
             if (
                 !url
                 || !url.pathname.includes("/individual-investor/insights/")
@@ -188,7 +200,7 @@ function citadelCandidates(lines: string[], targetUrl: URL): ArticleCandidate[] 
     for (let index = 0; index < lines.length; index++) {
         const emptyLink = lines[index].match(/^\[\]\((https?:\/\/[^)]+)\)\s*$/);
         if (!emptyLink) continue;
-        const url = resolveUrl(emptyLink[1], targetUrl);
+        const url = resolveUrl(emptyLink[1], targetUrl, ["citadelsecurities.com"]);
         if (
             !url
             || !url.pathname.startsWith("/news-and-insights/")
@@ -228,7 +240,10 @@ export function extractArticleCandidates(
     } else if (hostname === "csis.org") {
         adapter = "csis";
         candidates = csisCandidates(lines, targetUrl);
-    } else if (hostname === "dbresearch.com") {
+    } else if (
+        hostname === "dbresearch.com"
+        || hostname === "equityview.research.db.com"
+    ) {
         adapter = "dbresearch";
         candidates = dbResearchCandidates(lines, targetUrl);
     } else if (hostname === "morganstanley.com") {
