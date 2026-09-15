@@ -1,35 +1,42 @@
 // File: app/api/rss/status/route.ts
 //
 // Returns the health/status of a tracked feed.
-// Usage: /api/rss/status?url=https://blog.com
+// Usage: /api/rss/status?id=registered-rule-id
 //
 // Useful for debugging when your RSS reader shows unexpected behavior.
 
 import { loadRegistry } from "@/lib/storage";
+import { getRule } from "@/lib/rule-registry";
 
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
-    const targetUrl = searchParams.get("url");
+    const id = searchParams.get("id")?.trim();
 
-    if (!targetUrl) {
+    if (!id) {
         return new Response(
             JSON.stringify({
-                error: 'Missing "url" parameter',
-                usage: "/api/rss/status?url=https://site.com",
+                error: 'Missing "id" parameter',
+                usage: "/api/rss/status?id=registered-rule-id",
             }, null, 2),
             { status: 400, headers: { "Content-Type": "application/json" } }
         );
     }
 
-    const registry = await loadRegistry(targetUrl);
+    const rule = getRule(id);
+    if (!rule) {
+        return Response.json({ error: "Unknown feed rule", id }, { status: 404 });
+    }
+
+    const registry = await loadRegistry(`rule:${id}`);
     const articles = Object.values(registry);
 
     if (articles.length === 0) {
         return new Response(
             JSON.stringify({
-                url: targetUrl,
+                id,
+                sourceUrl: rule.source.url,
                 status: "no_data",
-                message: "No articles tracked for this URL. Generate a feed first with /api/rss?url=...",
+                message: "No articles tracked yet. Generate the feed first.",
             }, null, 2),
             { headers: { "Content-Type": "application/json" } }
         );
@@ -52,7 +59,8 @@ export async function GET(request: Request) {
 
     return new Response(
         JSON.stringify({
-            url: targetUrl,
+            id,
+            sourceUrl: rule.source.url,
             status: "active",
             trackedArticles: articles.length,
             newestFirstSeen,

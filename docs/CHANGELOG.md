@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-15
+
+- Published the first production rule for Man Group Insights. It performs the
+  site's deterministic investor-disclosure form handshake with an isolated
+  cookie jar, extracts all three insight views, and supports article full text.
+- Replaced runtime model inference with versioned, deterministic RuleV1 objects.
+- Restricted production fetching to registered rules and removed caller-provided
+  target URLs and selectors.
+- Added bounded HTML fetching, Cheerio CSS extraction, runtime assertions,
+  optional rule-scoped full text, and a shared feed service.
+- Removed the model SDK, Markdown conversion providers, adapters, snapshots,
+  extraction modes, and mutable selector configuration.
+- Changed single, merge, and status APIs to use rule IDs.
+- Added fixture tests, a rule catalogue, rule documentation, and `npm run check`.
+- Upgraded Next.js from 16.1.1 to 16.3.5 to address published advisories.
+
+Validation:
+- Live Man Insights extraction returned 18 unique items; the RSS endpoint
+  returned six requested items and full-text extraction returned article body.
+- Rule-engine fixture tests passed.
+- ESLint passed.
+- Production build passed.
+
 ## 2026-07-25
 
 - Preserved the target protocol in both Jina Reader endpoint URLs.

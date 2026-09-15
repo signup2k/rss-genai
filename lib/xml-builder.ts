@@ -1,9 +1,7 @@
 // lib/xml-builder.ts
 // Programmatic RSS 2.0 / Atom XML builder.
 //
-// Instead of letting the LLM generate raw XML (which is fragile and requires
-// post-hoc sanitization), we now have the LLM output structured JSON and
-// build well-formed XML here. This eliminates all XML escaping issues.
+// Rule extraction produces structured data; this module is the only XML writer.
 
 // --- Types ---
 
@@ -76,7 +74,7 @@ export function buildRSS(feed: RSSFeedData): string {
     lines.push(`  <link>${escapeXml(feed.channel.link)}</link>`);
     lines.push(`  <description>${escapeXml(feed.channel.description)}</description>`);
     lines.push(`  <lastBuildDate>${feedUpdatedAt(feed).toUTCString()}</lastBuildDate>`);
-    lines.push(`  <generator>RSS-GenAI</generator>`);
+    lines.push(`  <generator>RSS Rules</generator>`);
 
     for (const item of feed.items) {
         const guid = item.guid || item.link;
@@ -125,7 +123,7 @@ export function buildAtom(feed: RSSFeedData): string {
     lines.push(`  <id>${escapeXml(feed.channel.link)}</id>`);
     lines.push(`  <subtitle>${escapeXml(feed.channel.description)}</subtitle>`);
     lines.push(`  <updated>${feedUpdatedAt(feed).toISOString()}</updated>`);
-    lines.push(`  <generator>RSS-GenAI</generator>`);
+    lines.push(`  <generator>RSS Rules</generator>`);
 
     for (const item of feed.items) {
         const guid = item.guid || item.link;

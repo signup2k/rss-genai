@@ -11,7 +11,6 @@
 import { createHash, randomUUID } from "crypto";
 import { readFile, writeFile, mkdir, rename } from "fs/promises";
 import { join } from "path";
-import type { RSSFeedData } from "@/lib/xml-builder";
 
 // --- Types ---
 
@@ -26,33 +25,12 @@ export interface UrlRegistry {
     [guid: string]: ArticleRecord;
 }
 
-export interface FeedSnapshot {
-    version: number;
-    candidateUrls: string[];
-    candidateFingerprints: string[];
-    feedData: RSSFeedData;
-    updatedAtISO: string;
-}
-
-export type GlobalSiteConfig = Record<string, {
-    targetSelector?: string;
-    removeSelector?: string;
-    waitForSelector?: string;
-}>;
-
 // --- Helpers ---
 
 function registryKey(url: string): string {
     const hash = createHash("sha256").update(url).digest("hex").slice(0, 16);
     return `rss-registry:${hash}`;
 }
-
-function snapshotKey(key: string): string {
-    const hash = createHash("sha256").update(key).digest("hex").slice(0, 16);
-    return `rss-snapshot:${hash}`;
-}
-
-const GLOBAL_CONFIG_KEY = "rss-global-site-configs";
 
 // --- Upstash Redis backend ---
 
@@ -95,11 +73,6 @@ function fsPath(url: string): string {
     return join(REGISTRY_DIR, `${hash}.json`);
 }
 
-function fsSnapshotPath(key: string): string {
-    const hash = createHash("sha256").update(key).digest("hex").slice(0, 16);
-    return join(REGISTRY_DIR, `snapshot-${hash}.json`);
-}
-
 async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
     const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporaryPath, JSON.stringify(value, null, 2), "utf-8");
@@ -122,46 +95,6 @@ async function fsSave(url: string, registry: UrlRegistry): Promise<void> {
     } catch (e) {
         // Silently fail if filesystem is truly unavailable — better than crashing
         console.warn("[Storage] File-system write failed (non-critical):", e);
-    }
-}
-
-async function fsLoadSnapshot(key: string): Promise<FeedSnapshot | null> {
-    try {
-        const data = await readFile(fsSnapshotPath(key), "utf-8");
-        return JSON.parse(data) as FeedSnapshot;
-    } catch {
-        return null;
-    }
-}
-
-async function fsSaveSnapshot(key: string, snapshot: FeedSnapshot): Promise<void> {
-    try {
-        await mkdir(REGISTRY_DIR, { recursive: true });
-        await writeJsonAtomically(fsSnapshotPath(key), snapshot);
-    } catch (e) {
-        console.warn("[Storage] File-system snapshot write failed (non-critical):", e);
-    }
-}
-
-function fsGlobalConfigPath(): string {
-    return join(REGISTRY_DIR, "global-configs.json");
-}
-
-async function fsLoadGlobalConfigs(): Promise<GlobalSiteConfig> {
-    try {
-        const data = await readFile(fsGlobalConfigPath(), "utf-8");
-        return JSON.parse(data) as GlobalSiteConfig;
-    } catch {
-        return {};
-    }
-}
-
-async function fsSaveGlobalConfigs(configs: GlobalSiteConfig): Promise<void> {
-    try {
-        await mkdir(REGISTRY_DIR, { recursive: true });
-        await writeJsonAtomically(fsGlobalConfigPath(), configs);
-    } catch (e) {
-        console.warn("[Storage] File-system global config write failed (non-critical):", e);
     }
 }
 
@@ -193,57 +126,4 @@ export async function saveRegistry(url: string, registry: UrlRegistry): Promise<
         }
     }
     return fsSave(url, registry);
-}
-
-export async function loadFeedSnapshot(key: string): Promise<FeedSnapshot | null> {
-    const redis = await getRedis();
-    if (redis) {
-        try {
-            return await redis.get<FeedSnapshot>(snapshotKey(key));
-        } catch (e) {
-            console.warn("[Storage] Redis snapshot read failed, falling back to FS:", e);
-            return fsLoadSnapshot(key);
-        }
-    }
-    return fsLoadSnapshot(key);
-}
-
-export async function saveFeedSnapshot(key: string, snapshot: FeedSnapshot): Promise<void> {
-    const redis = await getRedis();
-    if (redis) {
-        try {
-            await redis.set(snapshotKey(key), snapshot);
-            return;
-        } catch (e) {
-            console.warn("[Storage] Redis snapshot write failed, falling back to FS:", e);
-        }
-    }
-    return fsSaveSnapshot(key, snapshot);
-}
-
-export async function loadGlobalSiteConfigs(): Promise<GlobalSiteConfig> {
-    const redis = await getRedis();
-    if (redis) {
-        try {
-            const data = await redis.get<GlobalSiteConfig>(GLOBAL_CONFIG_KEY);
-            return data ?? {};
-        } catch (e) {
-            console.warn("[Storage] Redis config read failed, falling back to FS:", e);
-            return fsLoadGlobalConfigs();
-        }
-    }
-    return fsLoadGlobalConfigs();
-}
-
-export async function saveGlobalSiteConfigs(configs: GlobalSiteConfig): Promise<void> {
-    const redis = await getRedis();
-    if (redis) {
-        try {
-            await redis.set(GLOBAL_CONFIG_KEY, configs);
-            return;
-        } catch (e) {
-            console.warn("[Storage] Redis config write failed, falling back to FS:", e);
-        }
-    }
-    return fsSaveGlobalConfigs(configs);
 }

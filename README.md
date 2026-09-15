@@ -1,71 +1,36 @@
-# RSS GenAI
+# RSS Rules
 
-Generate RSS 2.0 or Atom feeds from webpages that do not publish feeds of their
-own. The app converts a page to Markdown, extracts only source-backed article
-URLs, and builds XML locally.
+A small deterministic service that turns websites into RSS 2.0 or Atom feeds.
+Production only executes versioned rules that were tested in the external
+harness. It does not use an LLM, guess selectors, or fetch caller-provided URLs.
 
-The default `auto` mode uses lightweight site adapters where available and an
-OpenAI-compatible LLM for article metadata. Unsupported sites fall back to the
-full-page LLM path. Article links are normalized and checked before publication.
-
-## Getting Started
+## Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). See [SETUP.md](SETUP.md)
-for environment variables and deployment details.
+## Publish a rule
 
-## API Reference
+Develop and verify a `RuleV1` object in the harness, then add it to the `RULES`
+array in `rules/index.ts`. The full contract is documented in
+`docs/RULE_FORMAT.md`.
 
-### `/api/rss`
+## API
 
-Generates an RSS or Atom feed from a specified webpage.
-
-**Query Parameters:**
-- `url` (required): The target webpage URL.
-- `fulltext` (optional): Set to `true` to fetch article Markdown as full-text
-  content on a best-effort basis.
-- `limit` (optional): Maximum number of articles to extract (1-30, default: 10).
-- `format` (optional): `rss` (default) or `atom`.
-- `refresh` (optional): Set to `true` to bypass page, LLM, link-health, and
-  incremental snapshot caches for this feed.
-- `source` (optional): `auto` (default), `jina`, or `markdown`. `auto` tries Jina first and falls back to markdown.new.
-- `markdownMethod` (optional): markdown.new method: `auto` (default), `ai`, or `browser`.
-- `extract` (optional): `auto` (default), `llm`, `deterministic`, or `shadow`.
-  `auto` uses a site adapter to identify article cards, sends only new cards to
-  the LLM, and reuses a persistent snapshot when no new URLs appear. Unsupported
-  sites fall back to the full LLM path.
-
-#### Markdown Source Parameters
-
-This project can fetch markdown through Jina.ai Reader or markdown.new. CSS selector overrides only apply to Jina.ai Reader.
-
-- `target` (optional): CSS selector for exact content to extract (`X-Target-Selector`).
-- `remove` (optional): CSS selector for elements to remove, such as ads or navbars (`X-Remove-Selector`).
-- `waitfor` (optional): CSS selector to wait for before extraction, useful for dynamic content (`X-Wait-For-Selector`).
-
-**Example:**
 ```bash
-curl "http://localhost:3000/api/rss?url=https://example.com/blog&target=article.content&remove=.ads,.nav"
-curl "http://localhost:3000/api/rss?url=https://example.com/blog&source=markdown&markdownMethod=browser"
-curl "http://localhost:3000/api/rss?url=https://example.com/blog&extract=deterministic"
-curl "http://localhost:3000/api/rss?url=https://example.com/blog&extract=auto"
+curl "http://localhost:3000/api/rules"
+curl "http://localhost:3000/api/rss?id=site-blog"
+curl "http://localhost:3000/api/rss?id=site-blog&format=atom"
+curl "http://localhost:3000/api/rss?id=site-blog&fulltext=true&limit=20"
+curl "http://localhost:3000/api/rss/merge?id=site-blog&id=other-news"
+curl "http://localhost:3000/api/rss/status?id=site-blog"
 ```
 
-### `/api/rss/merge`
+Run `npm run check` before publishing. The production pipeline is deliberately short:
 
-Aggregates multiple RSS feeds into a single combined feed.
-
-**Query Parameters:**
-- `url` (recommended): Repeat this parameter for each target webpage URL.
-- `urls` (compatible): Comma-separated target URLs.
-- `title` (optional): Custom title for the aggregated feed.
-- `limit` (optional): Maximum articles per source.
-- `fulltext` (optional): Set to `true` for full article content.
-- `format` (optional): `rss` (default) or `atom`.
-- `extract` (optional): extraction mode forwarded to each source.
-- `source` (optional): `auto` (default), `jina`, or `markdown`.
-- `markdownMethod` (optional): markdown.new method: `auto` (default), `ai`, or `browser`.
+```text
+registered RuleV1 → bounded HTML fetch → Cheerio CSS extraction
+                  → URL/date normalization → RSS/Atom serialization
+```
