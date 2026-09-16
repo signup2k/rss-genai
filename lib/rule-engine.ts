@@ -28,7 +28,11 @@ function fieldValue($: CheerioAPI, item: Cheerio<AnyNode>, field?: RuleField): s
 
 function parseDate(value: string): string {
     if (!value) return "NO_DATE_FOUND";
-    const date = new Date(value);
+    // A page-local date such as "September 15, 2026" has no timezone. Treat
+    // it as UTC midnight instead of letting the server's local timezone move
+    // it to the previous calendar day.
+    const dateOnly = /^\s*(?:[A-Za-z]+ \d{1,2}, \d{4}|\d{1,2} [A-Za-z]+ \d{4})\s*$/.test(value);
+    const date = new Date(dateOnly ? `${value.trim()} UTC` : value);
     return Number.isNaN(date.getTime()) ? "NO_DATE_FOUND" : date.toUTCString();
 }
 

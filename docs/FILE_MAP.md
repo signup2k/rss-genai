@@ -13,6 +13,7 @@ Last structural update: 2026-09-16.
   assertions, URL normalization, and optional full text.
 - `rules/citadel-market-insights.ts`: Citadel native RSS rule using the reviewed
   Jina transport to reach the Cloudflare-protected origin.
+- `rules/db-research.ts`: Deutsche Bank Research home-page document rule.
 - `lib/feed-service.ts`: shared orchestration used by single and merged feeds.
 - `docs/RULE_FORMAT.md`: harness-facing rule contract.
 - `tests/rule-engine.test.ts`: deterministic fixture coverage.

@@ -6,6 +6,8 @@
   RSS/Atom inputs blocked by a site's Cloudflare challenge.
 - Added the harness-tested Citadel Securities Market Insights rule through
   `r.jina.ai`, preserving the source's native RSS dates and URLs.
+- Added the harness-tested Deutsche Bank Research home-page rule for document
+  publications, with deterministic title, link, date, summary, and topic extraction.
 
 ## 2026-09-15
 

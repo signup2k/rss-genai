@@ -1,7 +1,8 @@
 import type { FeedRuleV1 } from "@/lib/rule-schema";
 import { citadelMarketInsightsRule } from "@/rules/citadel-market-insights";
+import { dbResearchRule } from "@/rules/db-research";
 import { manInsightsRule } from "@/rules/man-insights";
 
 // The harness publishes reviewed RuleV1 objects into this array. Production
 // deliberately has no generic fallback: an unknown rule id cannot fetch a URL.
-export const RULES: FeedRuleV1[] = [manInsightsRule, citadelMarketInsightsRule];
+export const RULES: FeedRuleV1[] = [manInsightsRule, citadelMarketInsightsRule, dbResearchRule];
