@@ -49,12 +49,22 @@ function absolutizeHtml(fragment: string, baseUrl: string): string {
     return $.html();
 }
 
+export function unwrapTransportBody(rule: FeedRuleV1, body: string): string {
+    if (rule.source.transport !== "jina") return body;
+    const marker = "Markdown Content:";
+    const markerIndex = body.indexOf(marker);
+    if (markerIndex < 0) throw new Error("Jina response did not contain Markdown Content");
+    const content = body.slice(markerIndex + marker.length).trim();
+    if (!content) throw new Error("Jina response contained empty content");
+    return content;
+}
+
 export function extractFeedFromHtml(
     rule: FeedRuleV1,
     html: string,
     limit = 10
 ): RSSFeedData {
-    const $ = load(html);
+    const $ = load(html, rule.source.format === "xml" ? { xmlMode: true } : undefined);
     const items: RSSItem[] = [];
     const seen = new Set<string>();
     const allowedHosts = rule.source.allowedArticleHosts || [new URL(rule.source.url).hostname];
@@ -67,10 +77,13 @@ export function extractFeedFromHtml(
         if (items.length >= limit) return false;
         const item = $(element);
         const title = fieldValue($, item, rule.fields.title);
-        const rawLink = fieldValue($, item, {
-            attribute: "href",
-            ...rule.fields.link,
-        });
+        const rawLink = fieldValue(
+            $,
+            item,
+            rule.fields.link.selector
+                ? rule.fields.link
+                : { attribute: "href", ...rule.fields.link }
+        );
         let link: string | null = null;
         if (allowAnyHost) {
             try {
@@ -129,9 +142,14 @@ export interface RuleSession {
 
 export async function openRuleSession(rule: FeedRuleV1): Promise<RuleSession> {
     const fetchWithCookies = makeFetchCookie(fetch);
-    let response = await fetchWithCookies(rule.source.url, {
+    const requestUrl = rule.source.transport === "jina"
+        ? `https://r.jina.ai/${rule.source.url}`
+        : rule.source.url;
+    let response = await fetchWithCookies(requestUrl, {
         headers: {
-            Accept: "text/html,application/xhtml+xml",
+            Accept: rule.source.transport === "jina"
+                ? "text/plain"
+                : "text/html,application/xhtml+xml",
             "User-Agent": "rss-rules/1.0 (+personal feed generator)",
         },
         redirect: "follow",
@@ -176,7 +194,9 @@ export async function openRuleSession(rule: FeedRuleV1): Promise<RuleSession> {
     }
     const length = Number(response.headers.get("content-length") || 0);
     if (length > MAX_HTML_BYTES) throw new Error("Source document is too large");
-    const html = await response.text();
+    const rawBody = await response.text();
+    if (Buffer.byteLength(rawBody) > MAX_HTML_BYTES) throw new Error("Source document is too large");
+    const html = unwrapTransportBody(rule, rawBody);
     if (Buffer.byteLength(html) > MAX_HTML_BYTES) throw new Error("Source document is too large");
     return { html, fetcher: fetchWithCookies };
 }

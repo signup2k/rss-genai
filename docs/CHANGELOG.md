@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-16
+
+- Added explicit XML source support and a rule-level Jina transport for native
+  RSS/Atom inputs blocked by a site's Cloudflare challenge.
+- Added the harness-tested Citadel Securities Market Insights rule through
+  `r.jina.ai`, preserving the source's native RSS dates and URLs.
+
 ## 2026-09-15
 
 - Published the first production rule for Man Group Insights. It performs the

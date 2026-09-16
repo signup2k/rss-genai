@@ -11,6 +11,8 @@ export interface FeedRuleV1 {
     name: string;
     source: {
         url: string;
+        transport?: "direct" | "jina";
+        format?: "html" | "xml";
         itemSelector: string;
         allowedArticleHosts?: string[];
         form?: {
@@ -75,6 +77,12 @@ export function validateRule(value: unknown): FeedRuleV1 {
     }
     if (typeof value.source.itemSelector !== "string" || !value.source.itemSelector.trim()) {
         throw new Error("source.itemSelector is required");
+    }
+    if (value.source.format !== undefined && value.source.format !== "html" && value.source.format !== "xml") {
+        throw new Error("source.format must be html or xml");
+    }
+    if (value.source.transport !== undefined && value.source.transport !== "direct" && value.source.transport !== "jina") {
+        throw new Error("source.transport must be direct or jina");
     }
     if (value.source.form !== undefined) {
         if (!isRecord(value.source.form) || typeof value.source.form.selector !== "string") {

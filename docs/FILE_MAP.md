@@ -1,6 +1,6 @@
 # File map
 
-Last structural update: 2026-09-15.
+Last structural update: 2026-09-16.
 
 ## Rule pipeline
 
@@ -9,8 +9,10 @@ Last structural update: 2026-09-15.
 - `rules/README.md`: publishing workflow.
 - `lib/rule-schema.ts`: RuleV1 types and runtime validation.
 - `lib/rule-registry.ts`: validates rules at module load and resolves IDs.
-- `lib/rule-engine.ts`: bounded HTML fetch, Cheerio extraction, runtime
-  assertions, HTML URL normalization, and optional full text.
+- `lib/rule-engine.ts`: bounded HTML/XML fetch, Cheerio extraction, runtime
+  assertions, URL normalization, and optional full text.
+- `rules/citadel-market-insights.ts`: Citadel native RSS rule using the reviewed
+  Jina transport to reach the Cloudflare-protected origin.
 - `lib/feed-service.ts`: shared orchestration used by single and merged feeds.
 - `docs/RULE_FORMAT.md`: harness-facing rule contract.
 - `tests/rule-engine.test.ts`: deterministic fixture coverage.

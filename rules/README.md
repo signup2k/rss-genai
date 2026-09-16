@@ -9,3 +9,8 @@ workflow is:
 4. Add the reviewed rule to the `RULES` array and deploy this project.
 
 See `docs/RULE_FORMAT.md` for the complete contract.
+
+If a site only succeeds in a browser but returns a managed challenge to the
+server runtime, keep its harness candidate out of `RULES` until a stable,
+production-compatible transport is verified. A reviewed `transport: "jina"`
+rule is allowed when its live proxy response is covered by the harness.

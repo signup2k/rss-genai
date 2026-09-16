@@ -10,6 +10,8 @@ registered rule by `id`; callers cannot supply a URL or selectors.
   name: "Site Blog",
   source: {
     url: "https://example.com/blog",
+    transport: "direct", // use "jina" only when a tested proxy is required
+    format: "html", // omit for HTML; use "xml" for a native XML/RSS source
     itemSelector: "article.post",
     allowedArticleHosts: ["example.com"]
   },
@@ -48,6 +50,12 @@ the form selector and tested field overrides. The fetcher copies hidden tokens
 and default fields from the initial response, submits the form with a cookie
 jar, follows redirects, and extracts from the resulting HTML. Do not use this
 for login credentials or other secrets.
+
+`source.transport: "jina"` fetches `https://r.jina.ai/<source.url>` and unwraps
+the service's `Markdown Content` envelope before applying the normal extractor.
+This is a transport proxy, not an LLM call in this application. Use it only
+when a direct server fetch is blocked and the harness verifies the live response
+shape and rate-limit behavior.
 
 Full text is opt-in per rule and per request (`fulltext=true`). Production
 fetches each selected article, keeps the first `fulltext.selector` match, and
